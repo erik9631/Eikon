@@ -1,5 +1,5 @@
 [package]
-name = "Eikon"
+name = "eikon"
 version = "0.0.0"
 edition = "2021"
 authors = ["erik9631@gmail.com"]
@@ -14,3 +14,4 @@ winit = "0.30.5" # For testing the render engine
 [dependencies]
 eta-graph = "1.0.1"
 eta-algorithms = "1.5.4"
+nalgebra = "0.33.0"
