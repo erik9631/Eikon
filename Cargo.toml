@@ -1,0 +1,16 @@
+[package]
+name = "Eikon"
+version = "0.0.0"
+edition = "2021"
+authors = ["erik9631@gmail.com"]
+description = "High performance rendering engine. Supports both CPU and GPU rendering"
+license-file = "license.txt"
+readme = "README.MD"
+repository = "https://github.com/erik9631/Eikon"
+
+[dev-dependencies]
+winit = "0.30.5" # For testing the render engine
+
+[dependencies]
+eta-graph = "1.0.1"
+eta-algorithms = "1.5.4"
