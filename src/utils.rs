@@ -45,7 +45,7 @@ pub fn create_physical_device_extension_requirements() -> HashMap<&'static str, 
     );
     extensions
 }
-pub fn create_validation_layers() -> HashMap<&'static str, (&'static str, bool)> {
+pub fn create_validation_layers_requirements() -> HashMap<&'static str, (&'static str, bool)> {
     let mut layers = HashMap::new();
     layers.insert("VK_LAYER_KHRONOS_validation", ("VK_LAYER_KHRONOS_validation\0", true));
     layers
@@ -151,21 +151,21 @@ pub fn create_vulcan_instance(
 pub fn qet_swapchain_support(
     surface_loader: &khr::surface::Instance,
     physical_device: &PhysicalDevice,
-    surface: &vk::SurfaceKHR,
+    surface: vk::SurfaceKHR,
 ) -> SwapChainSupportDetails {
     let capabilities = unsafe {
         surface_loader
-            .get_physical_device_surface_capabilities(*physical_device, *surface)
+            .get_physical_device_surface_capabilities(*physical_device, surface)
             .expect("Failed to get surface capabilities")
     };
     let formats = unsafe {
         surface_loader
-            .get_physical_device_surface_formats(*physical_device, *surface)
+            .get_physical_device_surface_formats(*physical_device, surface)
             .expect("Failed to get surface formats")
     };
     let present_modes = unsafe {
         surface_loader
-            .get_physical_device_surface_present_modes(*physical_device, *surface)
+            .get_physical_device_surface_present_modes(*physical_device, surface)
             .expect("Failed to get surface present modes")
     };
     SwapChainSupportDetails {
@@ -264,6 +264,7 @@ pub fn check_device_extension_support(vulcan_instance: &ash::Instance, device: &
 pub fn pick_physical_device(
     vulcan_instance: &ash::Instance,
     surface_loader: &khr::surface::Instance,
+    surface: vk::SurfaceKHR,
 ) -> Vec<PhysicalDevice> {
     let physical_devices = unsafe {
         vulcan_instance
@@ -290,8 +291,12 @@ pub fn pick_physical_device(
             if !check_device_extension_support(vulcan_instance, physical_device) {
                 return false;
             }
+
             let swapchain_support = qet_swapchain_support(surface_loader, physical_device, surface);
 
+            if swapchain_support.formats.is_empty() | swapchain_support.present_modes.is_empty() {
+                return false;
+            }
             return true;
         })
         .collect();

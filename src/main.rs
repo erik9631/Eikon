@@ -1,6 +1,6 @@
 use crate::utils::{
-    create_logical_device, create_messenger_info, create_surface, create_validation_layers, create_vulcan_instance,
-    get_queue_families, pick_physical_device, QueueFamilyIndices,
+    create_logical_device, create_messenger_info, create_surface, create_validation_layers_requirements,
+    create_vulcan_instance, get_queue_families, pick_physical_device, QueueFamilyIndices,
 };
 use ash::vk::PhysicalDevice;
 use ash::{khr, vk};
@@ -17,38 +17,32 @@ use winit::window::{Window, WindowId};
 
 mod utils;
 
-pub struct VulcanApp {
-    initialized: bool,
-    window: Option<Window>,
+pub struct Vulkan {
     ash_entry: ash::Entry,
     vk_instance: ash::Instance,
     runtime_debugger: ash::ext::debug_utils::Instance,
     debug_utils_messenger: vk::DebugUtilsMessengerEXT,
     selected_physical_device: PhysicalDevice,
     surface_loader: khr::surface::Instance,
-    queue_family_indices: Option<QueueFamilyIndices>,
-    logical_device: Option<ash::Device>,
-    queue: Option<vk::Queue>,
-    surface: Option<vk::SurfaceKHR>,
+    queue_family_indices: QueueFamilyIndices,
+    logical_device: ash::Device,
+    queue: vk::Queue,
+    surface: vk::SurfaceKHR,
 }
 
-impl Drop for VulcanApp {
+impl Drop for Vulkan {
     fn drop(&mut self) {
         unsafe {
             self.runtime_debugger
                 .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
-            self.surface_loader
-                .as_ref()
-                .unwrap()
-                .destroy_surface(self.surface.unwrap(), None);
-
-            self.logical_device.as_ref().unwrap().destroy_device(None);
+            self.surface_loader.destroy_surface(self.surface, None);
+            self.logical_device.destroy_device(None);
             self.vk_instance.destroy_instance(None);
         }
     }
 }
 
-impl VulcanApp {
+impl Vulkan {
     fn create_runtime_debug_ext(
         entry: &ash::Entry,
         instance: &ash::Instance,
@@ -96,87 +90,94 @@ impl VulcanApp {
         vec
     }
 
-    pub fn new(validation_layers: HashMap<&'static str, (&'static str, bool)>) -> Self {
-        let mut event_loop_builder = EventLoop::builder();
-        let event_loop = event_loop_builder
-            .with_any_thread(true)
-            .build()
-            .expect("Failed to create event loop");
-
+    pub fn new(window: &Window) -> Self {
+        let validation_layers_requirements = create_validation_layers_requirements();
         let ash_entry = unsafe { ash::Entry::load().expect("Failed to create entry") };
-
-        let layers = Self::verify_validation_layers(&ash_entry, validation_layers);
+        let layers = Self::verify_validation_layers(&ash_entry, validation_layers_requirements);
         let creation_debugger = create_messenger_info();
-        println!("{}", layers.len());
 
-        let instance = create_vulcan_instance(
+        let vk_instance = create_vulcan_instance(
             &ash_entry,
             layers,
             &creation_debugger as *const vk::DebugUtilsMessengerCreateInfoEXT,
         );
-        let (runtime_debugger, debug_utils_messenger) = Self::create_runtime_debug_ext(&ash_entry, &instance);
-        let surface_loader = khr::surface::Instance::new(&ash_entry, &instance);
-        let physical_device = pick_physical_device(&instance)[0];
+        let (runtime_debugger, debug_utils_messenger) = Self::create_runtime_debug_ext(&ash_entry, &vk_instance);
+        let surface_loader = khr::surface::Instance::new(&ash_entry, &vk_instance);
+        let surface = create_surface(&ash_entry, &vk_instance, window);
 
-        let mut app = Self {
-            initialized: false,
-            ash_entry,
-            vk_instance: instance,
-            window: None,
-            runtime_debugger,
-            debug_utils_messenger,
-            surface_loader,
-            selected_physical_device: physical_device,
-            queue_family_indices: None,
-            logical_device: None,
-            queue: None,
+        let selected_physical_device = pick_physical_device(&vk_instance, &surface_loader, surface)[0];
 
-            surface: None,
-        };
-
-        event_loop.run_app(&mut app).expect("Failed to run event loop");
-        app
-    }
-}
-impl ApplicationHandler for VulcanApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.initialized {
-            return;
-        }
-        self.initialized = true;
-
-        let window = event_loop
-            .create_window(Window::default_attributes())
-            .expect("Failed to create window");
-        window.set_title("Eikon Engine");
-        self.window = Some(window);
-
-        self.surface = Some(create_surface(
-            &self.ash_entry,
-            &self.vk_instance,
-            self.window.as_ref().unwrap(),
-        ));
-        let surface = self.surface.as_ref().unwrap();
-
-        self.queue_family_indices = Some(get_queue_families(
-            &self.vk_instance,
-            &self.selected_physical_device,
-            &self.surface_loader,
-            *surface,
-        ));
-        let queue_family_indices = self.queue_family_indices.as_ref().unwrap();
+        let queue_family_indices =
+            get_queue_families(&vk_instance, &selected_physical_device, &surface_loader, surface);
+        let queue_family_indices = queue_family_indices;
 
         if queue_family_indices.graphics_family.is_none() {
             panic!("No graphics queue family found");
         }
 
-        self.logical_device = Some(create_logical_device(
-            &self.vk_instance,
-            &self.selected_physical_device,
-            &queue_family_indices,
-        ));
-        let logical_device = self.logical_device.as_ref().unwrap();
-        self.queue = Some(unsafe { logical_device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0) });
+        let logical_device = create_logical_device(&vk_instance, &selected_physical_device, &queue_family_indices);
+        let logical_device = logical_device;
+        let queue = unsafe { logical_device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0) };
+
+        let mut app = Self {
+            ash_entry,
+            vk_instance,
+            runtime_debugger,
+            debug_utils_messenger,
+            surface_loader,
+            selected_physical_device,
+            queue_family_indices,
+            logical_device,
+            queue,
+            surface,
+        };
+
+        app
+    }
+}
+
+struct App {
+    vulkan: Option<Vulkan>,
+    window: Option<Window>,
+    event_loop: Option<EventLoop<App>>,
+    init: bool,
+}
+
+impl App {
+    fn new() -> Self {
+        let event_loop = Some(
+            EventLoop::<App>::with_user_event()
+                .build()
+                .expect("Failed to create event loop"),
+        );
+        Self {
+            event_loop,
+            vulkan: None,
+            window: None,
+            init: false,
+        }
+    }
+
+    fn run(&mut self) {
+        let event_loop = self.event_loop.take().unwrap();
+        event_loop.run_app(self).expect("Failed to run event loop");
+    }
+}
+
+impl ApplicationHandler<App> for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.init {
+            return;
+        }
+        self.init = true;
+
+        let window = event_loop
+            .create_window(Window::default_attributes())
+            .expect("Failed to create window");
+        window.set_title("Eikon Engine");
+
+        self.vulkan = Some(Vulkan::new(&window));
+        self.window = Some(window);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
@@ -190,6 +191,6 @@ impl ApplicationHandler for VulcanApp {
     }
 }
 fn main() {
-    let validation_layers = create_validation_layers();
-    let app = VulcanApp::new(validation_layers);
+    let mut app = App::new();
+    app.run();
 }
