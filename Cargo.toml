@@ -9,7 +9,7 @@ readme = "README.MD"
 repository = "https://github.com/erik9631/Eikon"
 
 [dependencies]
-winit = "0.30.5" # For testing the render engine
+winit = "0.30.5"
 eta-graph = "1.0.1"
 eta-algorithms = "1.5.4"
 nalgebra = "0.33.0"
