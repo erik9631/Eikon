@@ -1,6 +1,6 @@
 use crate::utils::{
-    create_logical_device, create_messenger_info, create_surface, create_validation_layers_requirements,
-    create_vulcan_instance, get_queue_families, pick_physical_device, QueueFamilyIndices,
+    create_logical_device, create_messenger_info, create_surface, create_swap_chain, create_validation_layers_requirements,
+    create_vulcan_instance, get_queue_families, get_swapchain_support, pick_physical_device, QueueFamilyIndices,
 };
 use ash::vk::PhysicalDevice;
 use ash::{khr, vk};
@@ -28,6 +28,8 @@ pub struct Vulkan {
     logical_device: ash::Device,
     queue: vk::Queue,
     surface: vk::SurfaceKHR,
+    swap_chain_loader: khr::swapchain::Device,
+    swapchain: vk::SwapchainKHR,
 }
 
 impl Drop for Vulkan {
@@ -35,6 +37,7 @@ impl Drop for Vulkan {
         unsafe {
             self.runtime_debugger
                 .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
+            self.swap_chain_loader.destroy_swapchain(self.swapchain, None);
             self.surface_loader.destroy_surface(self.surface, None);
             self.logical_device.destroy_device(None);
             self.vk_instance.destroy_instance(None);
@@ -57,10 +60,7 @@ impl Vulkan {
         (debug_utils, result)
     }
 
-    fn verify_validation_layers(
-        entry: &ash::Entry,
-        mut layers: HashMap<&'static str, (&'static str, bool)>,
-    ) -> Vec<*const c_char> {
+    fn verify_validation_layers(entry: &ash::Entry, mut layers: HashMap<&'static str, (&'static str, bool)>) -> Vec<*const c_char> {
         let mut vec = Vec::new();
         let properties = unsafe {
             entry
@@ -107,8 +107,7 @@ impl Vulkan {
 
         let selected_physical_device = pick_physical_device(&vk_instance, &surface_loader, surface)[0];
 
-        let queue_family_indices =
-            get_queue_families(&vk_instance, &selected_physical_device, &surface_loader, surface);
+        let queue_family_indices = get_queue_families(&vk_instance, &selected_physical_device, &surface_loader, surface);
         let queue_family_indices = queue_family_indices;
 
         if queue_family_indices.graphics_family.is_none() {
@@ -118,6 +117,10 @@ impl Vulkan {
         let logical_device = create_logical_device(&vk_instance, &selected_physical_device, &queue_family_indices);
         let logical_device = logical_device;
         let queue = unsafe { logical_device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0) };
+
+        let swap_chain_loader = khr::swapchain::Device::new(&vk_instance, &logical_device);
+        let swapchain_support = get_swapchain_support(&surface_loader, &selected_physical_device, surface);
+        let swapchain = create_swap_chain(&swap_chain_loader, &swapchain_support, surface, &queue_family_indices, &window);
 
         let mut app = Self {
             ash_entry,
@@ -130,6 +133,8 @@ impl Vulkan {
             logical_device,
             queue,
             surface,
+            swap_chain_loader,
+            swapchain,
         };
 
         app
@@ -145,11 +150,7 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        let event_loop = Some(
-            EventLoop::<App>::with_user_event()
-                .build()
-                .expect("Failed to create event loop"),
-        );
+        let event_loop = Some(EventLoop::<App>::with_user_event().build().expect("Failed to create event loop"));
         Self {
             event_loop,
             vulkan: None,

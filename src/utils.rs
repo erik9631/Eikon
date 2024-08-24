@@ -1,4 +1,4 @@
-use ash::vk::PhysicalDevice;
+use ash::vk::{PhysicalDevice, SurfaceKHR};
 use ash::{ext, khr, vk};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
@@ -12,7 +12,7 @@ pub struct QueueFamilyIndices {
     pub priorities: [f32; 1],
 }
 pub struct SwapChainSupportDetails {
-    pub capabilities: vk::SurfaceCapabilitiesKHR,
+    pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
     pub formats: Vec<vk::SurfaceFormatKHR>,
     pub present_modes: Vec<vk::PresentModeKHR>,
 }
@@ -39,10 +39,7 @@ pub const REQUIRED_DEVICE_EXTENSIONS: &[*const c_char] = &[khr::swapchain::NAME.
 
 pub fn create_physical_device_extension_requirements() -> HashMap<&'static str, &'static str> {
     let mut extensions = HashMap::new();
-    extensions.insert(
-        khr::swapchain::NAME.to_str().unwrap(),
-        khr::swapchain::NAME.to_str().unwrap(),
-    );
+    extensions.insert(khr::swapchain::NAME.to_str().unwrap(), khr::swapchain::NAME.to_str().unwrap());
     extensions
 }
 pub fn create_validation_layers_requirements() -> HashMap<&'static str, (&'static str, bool)> {
@@ -141,17 +138,13 @@ pub fn create_vulcan_instance(
         enabled_extension_count: REQUIRED_EXTENSION_NAMES.len() as u32,
         _marker: Default::default(),
     };
-    unsafe {
-        entry
-            .create_instance(&create_info, None)
-            .expect("Failed to create instance!")
-    }
+    unsafe { entry.create_instance(&create_info, None).expect("Failed to create instance!") }
 }
 
-pub fn qet_swapchain_support(
+pub fn get_swapchain_support(
     surface_loader: &khr::surface::Instance,
     physical_device: &PhysicalDevice,
-    surface: vk::SurfaceKHR,
+    surface: SurfaceKHR,
 ) -> SwapChainSupportDetails {
     let capabilities = unsafe {
         surface_loader
@@ -169,7 +162,7 @@ pub fn qet_swapchain_support(
             .expect("Failed to get surface present modes")
     };
     SwapChainSupportDetails {
-        capabilities,
+        surface_capabilities: capabilities,
         formats,
         present_modes,
     }
@@ -292,7 +285,7 @@ pub fn pick_physical_device(
                 return false;
             }
 
-            let swapchain_support = qet_swapchain_support(surface_loader, physical_device, surface);
+            let swapchain_support = get_swapchain_support(surface_loader, physical_device, surface);
 
             if swapchain_support.formats.is_empty() | swapchain_support.present_modes.is_empty() {
                 return false;
@@ -362,7 +355,87 @@ pub fn create_logical_device(
     }
 }
 
-pub fn init_swap_chain() {}
+pub fn select_surface_format(swapchain_support: &SwapChainSupportDetails) -> vk::SurfaceFormatKHR {
+    for format in swapchain_support.formats.iter() {
+        if format.format == vk::Format::B8G8R8_SRGB && format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR {
+            return *format;
+        }
+    }
+    swapchain_support.formats[0]
+}
+
+pub fn select_present_mode(swapchain_support: &SwapChainSupportDetails) -> vk::PresentModeKHR {
+    for mode in swapchain_support.present_modes.iter() {
+        if *mode == vk::PresentModeKHR::FIFO {
+            return *mode;
+        }
+    }
+    swapchain_support.present_modes[0]
+}
+
+pub fn select_swap_size(swapchain_support: &SwapChainSupportDetails, window: &winit::window::Window) -> vk::Extent2D {
+    // If it is already set, the surface must be fixed and pre-configured. We can't change it.
+    if swapchain_support.surface_capabilities.current_extent.width != u32::MAX {
+        return swapchain_support.surface_capabilities.current_extent;
+    }
+
+    // If current_extent is u32::MAX, calculate based on window size
+    let window_size = window.inner_size();
+    let min_image_extent = swapchain_support.surface_capabilities.min_image_extent;
+    let max_image_extent = swapchain_support.surface_capabilities.max_image_extent;
+
+    vk::Extent2D {
+        width: window_size.width.clamp(min_image_extent.width, max_image_extent.width),
+        height: window_size.height.clamp(min_image_extent.height, max_image_extent.height),
+    }
+}
+
+pub fn create_swap_chain(
+    swap_chain_loader: &khr::swapchain::Device,
+    swapchain_support: &SwapChainSupportDetails,
+    surface: SurfaceKHR,
+    queue_family_indices: &QueueFamilyIndices,
+    window: &winit::window::Window,
+) -> vk::SwapchainKHR {
+    let surface_format = select_surface_format(swapchain_support);
+    let present_mode = select_present_mode(swapchain_support);
+    let extent = select_swap_size(swapchain_support, &window);
+    let mut image_sharing_mode = vk::SharingMode::EXCLUSIVE;
+    let mut queue_family_index_count = 0;
+    let mut p_queue_family_indices = null();
+    let queue_family_indices_array = [
+        queue_family_indices.surface_family.unwrap(),
+        queue_family_indices.graphics_family.unwrap(),
+    ];
+    if queue_family_indices.graphics_family.unwrap() != queue_family_indices.surface_family.unwrap() {
+        image_sharing_mode = vk::SharingMode::CONCURRENT;
+        p_queue_family_indices = queue_family_indices_array.as_ptr();
+        queue_family_index_count = 2;
+    }
+    let swapchain_create_info = vk::SwapchainCreateInfoKHR {
+        s_type: vk::StructureType::SWAPCHAIN_CREATE_INFO_KHR,
+        p_next: null(),
+        flags: Default::default(),
+        surface,
+        min_image_count: swapchain_support.surface_capabilities.min_image_count + 1,
+        image_format: surface_format.format,
+        image_color_space: surface_format.color_space,
+        image_extent: extent,
+        image_array_layers: 1,
+        image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        image_sharing_mode,
+        queue_family_index_count,
+        p_queue_family_indices,
+        pre_transform: swapchain_support.surface_capabilities.current_transform,
+        composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+        present_mode,
+        clipped: vk::TRUE,
+        old_swapchain: vk::SwapchainKHR::null(),
+        _marker: Default::default(),
+    };
+    let swap_chain = unsafe { swap_chain_loader.create_swapchain(&swapchain_create_info, None) };
+    swap_chain.expect("Failed to create Swapchain!")
+}
 
 pub fn init_commands() {}
 
