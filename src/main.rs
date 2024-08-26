@@ -1,8 +1,9 @@
 use crate::utils::{
-    create_logical_device, create_messenger_info, create_surface, create_swap_chain, create_validation_layers_requirements,
-    create_vulcan_instance, get_queue_families, get_swapchain_support, pick_physical_device, QueueFamilyIndices,
+    create_image_views, create_logical_device, create_messenger_info, create_surface, create_swap_chain,
+    create_validation_layers_requirements, create_vulcan_instance, get_queue_families, get_swapchain_support, pick_physical_device,
+    QueueFamilyIndices,
 };
-use ash::vk::PhysicalDevice;
+use ash::vk::{PhysicalDevice, SurfaceFormatKHR};
 use ash::{khr, vk};
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
@@ -30,6 +31,8 @@ pub struct Vulkan {
     surface: vk::SurfaceKHR,
     swap_chain_loader: khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
+    surface_format: SurfaceFormatKHR,
+    image_views: Vec<vk::ImageView>,
 }
 
 impl Drop for Vulkan {
@@ -39,6 +42,9 @@ impl Drop for Vulkan {
                 .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
             self.swap_chain_loader.destroy_swapchain(self.swapchain, None);
             self.surface_loader.destroy_surface(self.surface, None);
+            for image_view in self.image_views.iter() {
+                self.logical_device.destroy_image_view(*image_view, None);
+            }
             self.logical_device.destroy_device(None);
             self.vk_instance.destroy_instance(None);
         }
@@ -120,7 +126,9 @@ impl Vulkan {
 
         let swap_chain_loader = khr::swapchain::Device::new(&vk_instance, &logical_device);
         let swapchain_support = get_swapchain_support(&surface_loader, &selected_physical_device, surface);
-        let swapchain = create_swap_chain(&swap_chain_loader, &swapchain_support, surface, &queue_family_indices, &window);
+        let (swapchain, surface_format) =
+            create_swap_chain(&swap_chain_loader, &swapchain_support, surface, &queue_family_indices, &window);
+        let image_views = create_image_views(&logical_device, &swap_chain_loader, &surface_format, &swapchain);
 
         let mut app = Self {
             ash_entry,
@@ -135,6 +143,8 @@ impl Vulkan {
             surface,
             swap_chain_loader,
             swapchain,
+            surface_format,
+            image_views,
         };
 
         app

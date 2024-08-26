@@ -1,4 +1,4 @@
-use ash::vk::{PhysicalDevice, SurfaceKHR};
+use ash::vk::{ComponentMapping, ImageSubresourceRange, PhysicalDevice, SurfaceFormatKHR, SurfaceKHR};
 use ash::{ext, khr, vk};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
@@ -396,7 +396,7 @@ pub fn create_swap_chain(
     surface: SurfaceKHR,
     queue_family_indices: &QueueFamilyIndices,
     window: &winit::window::Window,
-) -> vk::SwapchainKHR {
+) -> (vk::SwapchainKHR, SurfaceFormatKHR) {
     let surface_format = select_surface_format(swapchain_support);
     let present_mode = select_present_mode(swapchain_support);
     let extent = select_swap_size(swapchain_support, &window);
@@ -434,9 +434,46 @@ pub fn create_swap_chain(
         _marker: Default::default(),
     };
     let swap_chain = unsafe { swap_chain_loader.create_swapchain(&swapchain_create_info, None) };
-    swap_chain.expect("Failed to create Swapchain!")
+    (swap_chain.expect("Failed to create Swapchain!"), surface_format)
 }
 
+pub fn create_image_views(
+    device: &ash::Device,
+    swapchain_loader: &khr::swapchain::Device,
+    format: &SurfaceFormatKHR,
+    swapchain: &vk::SwapchainKHR,
+) -> Vec<vk::ImageView> {
+    let swapchain_images = unsafe { swapchain_loader.get_swapchain_images(*swapchain) }.expect("Failed to get Swapchain Images.");
+    let mut swapchain_image_views = Vec::with_capacity(swapchain_images.len());
+    for image in swapchain_images {
+        let create_info = vk::ImageViewCreateInfo {
+            s_type: vk::StructureType::IMAGE_VIEW_CREATE_INFO,
+            p_next: null(),
+            flags: Default::default(),
+            image,
+            view_type: vk::ImageViewType::TYPE_2D,
+            format: format.format,
+            components: ComponentMapping {
+                r: vk::ComponentSwizzle::IDENTITY,
+                g: vk::ComponentSwizzle::IDENTITY,
+                b: vk::ComponentSwizzle::IDENTITY,
+                a: vk::ComponentSwizzle::IDENTITY,
+            },
+            subresource_range: ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+            _marker: Default::default(),
+        };
+        let image_view = unsafe { device.create_image_view(&create_info, None) }.expect("Failed to create Image View!");
+        swapchain_image_views.push(image_view)
+    }
+    println!("Created {} image views!", swapchain_image_views.len());
+    swapchain_image_views
+}
 pub fn init_commands() {}
 
 pub fn init_sync() {}
