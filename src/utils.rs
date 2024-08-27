@@ -2,8 +2,8 @@ use ash::vk::{ComponentMapping, ImageSubresourceRange, PhysicalDevice, SurfaceFo
 use ash::{ext, khr, vk};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
-use std::ptr;
 use std::ptr::null;
+use std::{fs, ptr};
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 
 pub struct QueueFamilyIndices {
@@ -473,6 +473,34 @@ pub fn create_image_views(
     }
     println!("Created {} image views!", swapchain_image_views.len());
     swapchain_image_views
+}
+
+pub fn load_shaders(logical_device: &ash::Device, shader_dir: &str) -> HashMap<&'static str, vk::ShaderModule> {
+    let fragment_shader = fs::read(shader_dir.to_string() + "/fshader.spv").expect("Failed to read shader file");
+    let vertex_shader = fs::read(shader_dir.to_string() + "/vshader.spv").expect("Failed to read shader file");
+    let mut byte_shaders = Vec::with_capacity(2);
+    byte_shaders.push((fragment_shader, "fshader"));
+    byte_shaders.push((vertex_shader, "vshader"));
+    let mut shader_modules = HashMap::with_capacity(2);
+
+    for (shader, name) in byte_shaders.iter() {
+        if (shader.len() % 4) != 0 {
+            panic!("Shader {} is not 4 byte aligned", name);
+        }
+
+        let shader = vk::ShaderModuleCreateInfo {
+            s_type: vk::StructureType::SHADER_MODULE_CREATE_INFO,
+            p_next: null(),
+            flags: Default::default(),
+            code_size: shader.len(),
+            p_code: shader.as_ptr() as *const u32,
+            _marker: Default::default(),
+        };
+        let shader_module = unsafe { logical_device.create_shader_module(&shader, None) }.expect("Failed to create shader module!");
+        println!("Created shader module: {}", name);
+        shader_modules.insert(*name, shader_module);
+    }
+    shader_modules
 }
 pub fn init_commands() {}
 

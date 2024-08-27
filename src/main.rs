@@ -1,7 +1,7 @@
 use crate::utils::{
     create_image_views, create_logical_device, create_messenger_info, create_surface, create_swap_chain,
-    create_validation_layers_requirements, create_vulcan_instance, get_queue_families, get_swapchain_support, pick_physical_device,
-    QueueFamilyIndices,
+    create_validation_layers_requirements, create_vulcan_instance, get_queue_families, get_swapchain_support, load_shaders,
+    pick_physical_device, QueueFamilyIndices,
 };
 use ash::vk::{PhysicalDevice, SurfaceFormatKHR};
 use ash::{khr, vk};
@@ -33,6 +33,7 @@ pub struct Vulkan {
     swapchain: vk::SwapchainKHR,
     surface_format: SurfaceFormatKHR,
     image_views: Vec<vk::ImageView>,
+    shaders: HashMap<&'static str, vk::ShaderModule>,
 }
 
 impl Drop for Vulkan {
@@ -44,6 +45,9 @@ impl Drop for Vulkan {
             self.surface_loader.destroy_surface(self.surface, None);
             for image_view in self.image_views.iter() {
                 self.logical_device.destroy_image_view(*image_view, None);
+            }
+            for shader_modules in self.shaders.values() {
+                self.logical_device.destroy_shader_module(*shader_modules, None);
             }
             self.logical_device.destroy_device(None);
             self.vk_instance.destroy_instance(None);
@@ -129,6 +133,7 @@ impl Vulkan {
         let (swapchain, surface_format) =
             create_swap_chain(&swap_chain_loader, &swapchain_support, surface, &queue_family_indices, &window);
         let image_views = create_image_views(&logical_device, &swap_chain_loader, &surface_format, &swapchain);
+        let shaders = load_shaders(&logical_device, "cshaders");
 
         let mut app = Self {
             ash_entry,
@@ -145,6 +150,7 @@ impl Vulkan {
             swapchain,
             surface_format,
             image_views,
+            shaders,
         };
 
         app
