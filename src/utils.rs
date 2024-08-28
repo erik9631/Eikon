@@ -396,7 +396,7 @@ pub fn create_swap_chain(
     surface: SurfaceKHR,
     queue_family_indices: &QueueFamilyIndices,
     window: &winit::window::Window,
-) -> (vk::SwapchainKHR, SurfaceFormatKHR) {
+) -> (vk::SwapchainKHR, SurfaceFormatKHR, vk::Extent2D) {
     let surface_format = select_surface_format(swapchain_support);
     let present_mode = select_present_mode(swapchain_support);
     let extent = select_swap_size(swapchain_support, &window);
@@ -434,7 +434,7 @@ pub fn create_swap_chain(
         _marker: Default::default(),
     };
     let swap_chain = unsafe { swap_chain_loader.create_swapchain(&swapchain_create_info, None) };
-    (swap_chain.expect("Failed to create Swapchain!"), surface_format)
+    (swap_chain.expect("Failed to create Swapchain!"), surface_format, extent)
 }
 
 pub fn create_image_views(
@@ -502,6 +502,133 @@ pub fn load_shaders(logical_device: &ash::Device, shader_dir: &str) -> HashMap<&
     }
     shader_modules
 }
-pub fn init_commands() {}
+
+pub fn create_pipeline(swapchain_size: vk::Extent2D, device: &ash::Device) -> vk::PipelineLayout {
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let pipline_dynamic_state = vk::PipelineDynamicStateCreateInfo {
+        s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        dynamic_state_count: 2,
+        p_dynamic_states: dynamic_states.as_ptr(),
+        _marker: Default::default(),
+    };
+
+    let pipeline_vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
+        s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        vertex_binding_description_count: 0,
+        p_vertex_binding_descriptions: null(),
+        vertex_attribute_description_count: 0,
+        p_vertex_attribute_descriptions: null(),
+        _marker: Default::default(),
+    };
+
+    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo {
+        s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+        primitive_restart_enable: vk::FALSE,
+        _marker: Default::default(),
+    };
+
+    let viewport = vk::Viewport {
+        x: 0.0,
+        y: 0.0,
+        width: swapchain_size.width as f32,
+        height: swapchain_size.height as f32,
+        min_depth: 0.0,
+        max_depth: 1.0,
+    };
+
+    let scissor = vk::Rect2D {
+        offset: vk::Offset2D { x: 0, y: 0 },
+        extent: swapchain_size,
+    };
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo {
+        s_type: vk::StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        viewport_count: 1,
+        p_viewports: &viewport,
+        scissor_count: 1,
+        p_scissors: &scissor,
+        _marker: Default::default(),
+    };
+
+    let rasterizer = vk::PipelineRasterizationStateCreateInfo {
+        s_type: vk::StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        depth_clamp_enable: vk::FALSE,
+        rasterizer_discard_enable: vk::FALSE,
+        polygon_mode: vk::PolygonMode::FILL,
+        cull_mode: vk::CullModeFlags::BACK,
+        front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+        depth_bias_enable: 0,
+        depth_bias_constant_factor: 0.0,
+        depth_bias_clamp: 0.0,
+        depth_bias_slope_factor: 0.0,
+        line_width: 1.0,
+        _marker: Default::default(),
+    };
+
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo {
+        s_type: vk::StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        rasterization_samples: vk::SampleCountFlags::TYPE_1,
+        sample_shading_enable: vk::FALSE,
+        min_sample_shading: 1.0,
+        p_sample_mask: null(),
+        alpha_to_coverage_enable: vk::FALSE,
+        alpha_to_one_enable: vk::FALSE,
+        _marker: Default::default(),
+    };
+
+    let color_blending_attachment = vk::PipelineColorBlendAttachmentState {
+        blend_enable: vk::TRUE,
+        src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+        dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        color_blend_op: vk::BlendOp::ADD,
+        src_alpha_blend_factor: vk::BlendFactor::ONE,
+        dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+        alpha_blend_op: Default::default(),
+        color_write_mask: Default::default(),
+    };
+
+    let color_blending_state = vk::PipelineColorBlendStateCreateInfo {
+        s_type: vk::StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        logic_op_enable: vk::FALSE,
+        logic_op: vk::LogicOp::COPY,
+        attachment_count: 1,
+        p_attachments: &color_blending_attachment as *const vk::PipelineColorBlendAttachmentState,
+        blend_constants: [0.0, 0.0, 0.0, 0.0],
+        _marker: Default::default(),
+    };
+
+    let pipeline_layout_create_info = vk::PipelineLayoutCreateInfo {
+        s_type: vk::StructureType::PIPELINE_LAYOUT_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        set_layout_count: 0,
+        p_set_layouts: null(),
+        push_constant_range_count: 0,
+        p_push_constant_ranges: null(),
+        _marker: Default::default(),
+    };
+
+    let pipeline = unsafe {
+        device
+            .create_pipeline_layout(&pipeline_layout_create_info, None)
+            .expect("Failed to create pipeline layout!")
+    };
+    pipeline
+}
 
 pub fn init_sync() {}

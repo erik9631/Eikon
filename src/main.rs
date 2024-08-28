@@ -1,5 +1,5 @@
 use crate::utils::{
-    create_image_views, create_logical_device, create_messenger_info, create_surface, create_swap_chain,
+    create_image_views, create_logical_device, create_messenger_info, create_pipeline, create_surface, create_swap_chain,
     create_validation_layers_requirements, create_vulcan_instance, get_queue_families, get_swapchain_support, load_shaders,
     pick_physical_device, QueueFamilyIndices,
 };
@@ -34,6 +34,8 @@ pub struct Vulkan {
     surface_format: SurfaceFormatKHR,
     image_views: Vec<vk::ImageView>,
     shaders: HashMap<&'static str, vk::ShaderModule>,
+    swapchain_size: vk::Extent2D,
+    pipeline_layout: vk::PipelineLayout,
 }
 
 impl Drop for Vulkan {
@@ -43,6 +45,7 @@ impl Drop for Vulkan {
                 .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
             self.swap_chain_loader.destroy_swapchain(self.swapchain, None);
             self.surface_loader.destroy_surface(self.surface, None);
+            self.logical_device.destroy_pipeline_layout(self.pipeline_layout, None);
             for image_view in self.image_views.iter() {
                 self.logical_device.destroy_image_view(*image_view, None);
             }
@@ -130,10 +133,11 @@ impl Vulkan {
 
         let swap_chain_loader = khr::swapchain::Device::new(&vk_instance, &logical_device);
         let swapchain_support = get_swapchain_support(&surface_loader, &selected_physical_device, surface);
-        let (swapchain, surface_format) =
+        let (swapchain, surface_format, swapchain_size) =
             create_swap_chain(&swap_chain_loader, &swapchain_support, surface, &queue_family_indices, &window);
         let image_views = create_image_views(&logical_device, &swap_chain_loader, &surface_format, &swapchain);
         let shaders = load_shaders(&logical_device, "cshaders");
+        let pipeline_layout = create_pipeline(swapchain_size, &logical_device);
 
         let mut app = Self {
             ash_entry,
@@ -151,6 +155,8 @@ impl Vulkan {
             surface_format,
             image_views,
             shaders,
+            swapchain_size,
+            pipeline_layout,
         };
 
         app
