@@ -514,8 +514,8 @@ pub fn create_render_pass(device: &ash::Device, surface_format: &SurfaceFormatKH
         flags: Default::default(),
         format: surface_format.format,
         samples: vk::SampleCountFlags::TYPE_1,
-        load_op: vk::AttachmentLoadOp::DONT_CARE,
-        store_op: vk::AttachmentStoreOp::DONT_CARE,
+        load_op: vk::AttachmentLoadOp::CLEAR,
+        store_op: vk::AttachmentStoreOp::STORE,
         stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
         stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
         initial_layout: vk::ImageLayout::UNDEFINED,
@@ -541,6 +541,16 @@ pub fn create_render_pass(device: &ash::Device, surface_format: &SurfaceFormatKH
         _marker: Default::default(),
     };
 
+    let subpass_dependency = vk::SubpassDependency {
+        src_subpass: vk::SUBPASS_EXTERNAL,
+        dst_subpass: 0,
+        src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        src_access_mask: vk::AccessFlags::empty(),
+        dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+        dependency_flags: vk::DependencyFlags::BY_REGION,
+    };
+
     let render_pass = vk::RenderPassCreateInfo {
         s_type: vk::StructureType::RENDER_PASS_CREATE_INFO,
         p_next: null(),
@@ -549,15 +559,15 @@ pub fn create_render_pass(device: &ash::Device, surface_format: &SurfaceFormatKH
         p_attachments: &color_attachment as *const vk::AttachmentDescription,
         subpass_count: 1,
         p_subpasses: &subpass as *const vk::SubpassDescription,
-        dependency_count: 0,
-        p_dependencies: null(),
+        dependency_count: 1,
+        p_dependencies: &subpass_dependency as *const vk::SubpassDependency,
         _marker: Default::default(),
     };
 
     unsafe { device.create_render_pass(&render_pass, None) }.expect("Failed to create render pass!")
 }
 
-pub fn create_pipeline(swapchain_size: vk::Extent2D, logical_device: &ash::Device, format: &SurfaceFormatKHR) -> PipelineInfo {
+pub fn create_pipeline(logical_device: &ash::Device, format: &SurfaceFormatKHR) -> PipelineInfo {
     let shaders = load_shaders(&logical_device, "cshaders");
     let render_pass = create_render_pass(&logical_device, format);
 
@@ -612,20 +622,6 @@ pub fn create_pipeline(swapchain_size: vk::Extent2D, logical_device: &ash::Devic
         topology: vk::PrimitiveTopology::TRIANGLE_LIST,
         primitive_restart_enable: vk::FALSE,
         _marker: Default::default(),
-    };
-
-    let viewport = vk::Viewport {
-        x: 0.0,
-        y: 0.0,
-        width: swapchain_size.width as f32,
-        height: swapchain_size.height as f32,
-        min_depth: 0.0,
-        max_depth: 1.0,
-    };
-
-    let scissor = vk::Rect2D {
-        offset: vk::Offset2D { x: 0, y: 0 },
-        extent: swapchain_size,
     };
 
     let viewport_state = vk::PipelineViewportStateCreateInfo {
@@ -795,68 +791,22 @@ pub fn create_command_buffers(device: &ash::Device, command_pool: vk::CommandPoo
     command_buffers
 }
 
-pub fn record_command_buffer(
-    command_buffer: CommandBuffer,
-    image_index: usize,
-    render_pass: &vk::RenderPass,
-    framebuffers: &Vec<vk::Framebuffer>,
-    swapchain_size: vk::Extent2D,
-    device: &ash::Device,
-    pipeline: &vk::Pipeline,
-) {
-    let clear_values = [vk::ClearValue {
-        color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 1.0],
-        },
-    }];
-    let cmd_begin_info = vk::CommandBufferBeginInfo {
-        s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+pub fn create_sync_objects(device: &ash::Device, queue_family_indices: &QueueFamilyIndices) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
+    let semaphore_create_info = vk::SemaphoreCreateInfo {
+        s_type: vk::StructureType::SEMAPHORE_CREATE_INFO,
         p_next: null(),
-        flags: vk::CommandBufferUsageFlags::empty(),
-        p_inheritance_info: null(),
+        flags: Default::default(),
         _marker: Default::default(),
     };
+    let image_available_semaphore = unsafe { device.create_semaphore(&semaphore_create_info, None) }.expect("Failed to create semaphore!");
+    let render_finished_semaphore = unsafe { device.create_semaphore(&semaphore_create_info, None) }.expect("Failed to create semaphore!");
 
-    unsafe {
-        device
-            .begin_command_buffer(command_buffer, &cmd_begin_info)
-            .expect("Failed to begin command buffer!")
-    };
-
-    let render_pass_begin_info = vk::RenderPassBeginInfo {
-        s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
+    let fence_create_info = vk::FenceCreateInfo {
+        s_type: vk::StructureType::FENCE_CREATE_INFO,
         p_next: null(),
-        render_pass: *render_pass,
-        framebuffer: framebuffers[image_index],
-        render_area: vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: swapchain_size,
-        },
-        clear_value_count: 1,
-        p_clear_values: clear_values.as_ptr(),
+        flags: vk::FenceCreateFlags::SIGNALED,
         _marker: Default::default(),
     };
-
-    unsafe { device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE) };
-    unsafe {
-        device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
-    }
-
-    let viewport = vk::Viewport {
-        x: 0.0,
-        y: 0.0,
-        width: swapchain_size.width as f32,
-        height: swapchain_size.height as f32,
-        min_depth: 0.0,
-        max_depth: 1.0,
-    };
-    let scissor = vk::Rect2D {
-        offset: vk::Offset2D { x: 0, y: 0 },
-        extent: swapchain_size,
-    };
-    unsafe { device.cmd_set_viewport(command_buffer, 0, &[viewport]) };
-    unsafe { device.cmd_set_scissor(command_buffer, 0, &[scissor]) };
-    unsafe { device.cmd_draw(command_buffer, 3, 1, 0, 0) };
-    unsafe { device.cmd_end_render_pass(command_buffer) };
-    unsafe { device.end_command_buffer(command_buffer).expect("Failed to end command buffer!") };
+    let fence = unsafe { device.create_fence(&fence_create_info, None) }.expect("Failed to create fence!");
+    (image_available_semaphore, render_finished_semaphore, fence)
 }
