@@ -1,7 +1,7 @@
 use crate::utils::{
-    create_image_views, create_logical_device, create_messenger_info, create_pipeline, create_surface, create_swap_chain,
-    create_validation_layers_requirements, create_vulcan_instance, get_queue_families, get_swapchain_support, load_shaders,
-    pick_physical_device, QueueFamilyIndices,
+    create_command_pool, create_framebuffer, create_image_views, create_logical_device, create_messenger_info, create_pipeline,
+    create_surface, create_swap_chain, create_validation_layers_requirements, create_vulcan_instance, get_queue_families,
+    get_swapchain_support, pick_physical_device, PipelineInfo, QueueFamilyIndices,
 };
 use ash::vk::{PhysicalDevice, SurfaceFormatKHR};
 use ash::{khr, vk};
@@ -13,11 +13,9 @@ use winit::event::WindowEvent;
 use winit::event::WindowEvent::CloseRequested;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::windows::EventLoopBuilderExtWindows;
-use winit::raw_window_handle::HasRawWindowHandle;
 use winit::window::{Window, WindowId};
 
 mod utils;
-
 pub struct Vulkan {
     ash_entry: ash::Entry,
     vk_instance: ash::Instance,
@@ -31,11 +29,12 @@ pub struct Vulkan {
     surface: vk::SurfaceKHR,
     swap_chain_loader: khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
+    swapchain_size: vk::Extent2D,
     surface_format: SurfaceFormatKHR,
     image_views: Vec<vk::ImageView>,
-    shaders: HashMap<&'static str, vk::ShaderModule>,
-    swapchain_size: vk::Extent2D,
-    pipeline_layout: vk::PipelineLayout,
+    pipeline_info: PipelineInfo,
+    frame_buffers: Vec<vk::Framebuffer>,
+    command_pool: vk::CommandPool,
 }
 
 impl Drop for Vulkan {
@@ -45,12 +44,22 @@ impl Drop for Vulkan {
                 .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
             self.swap_chain_loader.destroy_swapchain(self.swapchain, None);
             self.surface_loader.destroy_surface(self.surface, None);
-            self.logical_device.destroy_pipeline_layout(self.pipeline_layout, None);
+            self.logical_device.destroy_command_pool(self.command_pool, None);
+
+            for frame_buffer in self.frame_buffers.iter() {
+                self.logical_device.destroy_framebuffer(*frame_buffer, None);
+            }
+
+            self.logical_device.destroy_pipeline(self.pipeline_info.pipeline[0], None);
+            self.logical_device
+                .destroy_pipeline_layout(self.pipeline_info.pipeline_layout, None);
+            self.logical_device.destroy_render_pass(self.pipeline_info.render_pass, None);
+            for shader_modules in self.pipeline_info.shaders.values() {
+                self.logical_device.destroy_shader_module(*shader_modules, None);
+            }
+
             for image_view in self.image_views.iter() {
                 self.logical_device.destroy_image_view(*image_view, None);
-            }
-            for shader_modules in self.shaders.values() {
-                self.logical_device.destroy_shader_module(*shader_modules, None);
             }
             self.logical_device.destroy_device(None);
             self.vk_instance.destroy_instance(None);
@@ -136,8 +145,9 @@ impl Vulkan {
         let (swapchain, surface_format, swapchain_size) =
             create_swap_chain(&swap_chain_loader, &swapchain_support, surface, &queue_family_indices, &window);
         let image_views = create_image_views(&logical_device, &swap_chain_loader, &surface_format, &swapchain);
-        let shaders = load_shaders(&logical_device, "cshaders");
-        let pipeline_layout = create_pipeline(swapchain_size, &logical_device);
+        let pipeline_info = create_pipeline(swapchain_size, &logical_device, &surface_format);
+        let frame_buffers = create_framebuffer(&logical_device, swapchain_size, pipeline_info.render_pass, &image_views);
+        let command_pool = create_command_pool(&logical_device, &queue_family_indices);
 
         let mut app = Self {
             ash_entry,
@@ -154,9 +164,10 @@ impl Vulkan {
             swapchain,
             surface_format,
             image_views,
-            shaders,
             swapchain_size,
-            pipeline_layout,
+            pipeline_info,
+            frame_buffers,
+            command_pool,
         };
 
         app
@@ -166,13 +177,13 @@ impl Vulkan {
 struct App {
     vulkan: Option<Vulkan>,
     window: Option<Window>,
-    event_loop: Option<EventLoop<App>>,
+    event_loop: Option<EventLoop<()>>,
     init: bool,
 }
 
 impl App {
     fn new() -> Self {
-        let event_loop = Some(EventLoop::<App>::with_user_event().build().expect("Failed to create event loop"));
+        let event_loop = Some(EventLoop::<()>::with_user_event().build().expect("Failed to create event loop"));
         Self {
             event_loop,
             vulkan: None,
@@ -187,7 +198,7 @@ impl App {
     }
 }
 
-impl ApplicationHandler<App> for App {
+impl ApplicationHandler<()> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.init {
             return;

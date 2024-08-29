@@ -1,10 +1,17 @@
-use ash::vk::{ComponentMapping, ImageSubresourceRange, PhysicalDevice, SurfaceFormatKHR, SurfaceKHR};
+use ash::vk::{CommandBuffer, ComponentMapping, ImageSubresourceRange, PhysicalDevice, SurfaceFormatKHR, SurfaceKHR};
 use ash::{ext, khr, vk};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
 use std::ptr::null;
 use std::{fs, ptr};
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+
+pub struct PipelineInfo {
+    pub shaders: HashMap<&'static str, vk::ShaderModule>,
+    pub pipeline_layout: vk::PipelineLayout,
+    pub render_pass: vk::RenderPass,
+    pub pipeline: Vec<vk::Pipeline>,
+}
 
 pub struct QueueFamilyIndices {
     pub graphics_family: Option<u32>,
@@ -502,8 +509,81 @@ pub fn load_shaders(logical_device: &ash::Device, shader_dir: &str) -> HashMap<&
     }
     shader_modules
 }
+pub fn create_render_pass(device: &ash::Device, surface_format: &SurfaceFormatKHR) -> vk::RenderPass {
+    let color_attachment = vk::AttachmentDescription {
+        flags: Default::default(),
+        format: surface_format.format,
+        samples: vk::SampleCountFlags::TYPE_1,
+        load_op: vk::AttachmentLoadOp::DONT_CARE,
+        store_op: vk::AttachmentStoreOp::DONT_CARE,
+        stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+        stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+        initial_layout: vk::ImageLayout::UNDEFINED,
+        final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+    };
 
-pub fn create_pipeline(swapchain_size: vk::Extent2D, device: &ash::Device) -> vk::PipelineLayout {
+    let color_attachment_ref = vk::AttachmentReference {
+        attachment: 0,
+        layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+    };
+
+    let subpass = vk::SubpassDescription {
+        flags: Default::default(),
+        pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+        input_attachment_count: 0,
+        p_input_attachments: null(),
+        color_attachment_count: 1,
+        p_color_attachments: &color_attachment_ref,
+        p_resolve_attachments: null(),
+        p_depth_stencil_attachment: null(),
+        preserve_attachment_count: 0,
+        p_preserve_attachments: null(),
+        _marker: Default::default(),
+    };
+
+    let render_pass = vk::RenderPassCreateInfo {
+        s_type: vk::StructureType::RENDER_PASS_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        attachment_count: 1,
+        p_attachments: &color_attachment as *const vk::AttachmentDescription,
+        subpass_count: 1,
+        p_subpasses: &subpass as *const vk::SubpassDescription,
+        dependency_count: 0,
+        p_dependencies: null(),
+        _marker: Default::default(),
+    };
+
+    unsafe { device.create_render_pass(&render_pass, None) }.expect("Failed to create render pass!")
+}
+
+pub fn create_pipeline(swapchain_size: vk::Extent2D, logical_device: &ash::Device, format: &SurfaceFormatKHR) -> PipelineInfo {
+    let shaders = load_shaders(&logical_device, "cshaders");
+    let render_pass = create_render_pass(&logical_device, format);
+
+    let vertex_shader_stage_info = vk::PipelineShaderStageCreateInfo {
+        s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        module: shaders["vshader"],
+        p_name: b"main\0".as_ptr() as *const c_char,
+        p_specialization_info: null(),
+        stage: vk::ShaderStageFlags::VERTEX,
+        _marker: Default::default(),
+    };
+
+    let fragment_shader_stage_info = vk::PipelineShaderStageCreateInfo {
+        s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        module: shaders["fshader"],
+        p_name: b"main\0".as_ptr() as *const c_char,
+        p_specialization_info: null(),
+        stage: vk::ShaderStageFlags::FRAGMENT,
+        _marker: Default::default(),
+    };
+    let stages = [vertex_shader_stage_info, fragment_shader_stage_info];
+
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let pipline_dynamic_state = vk::PipelineDynamicStateCreateInfo {
         s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
@@ -553,9 +633,9 @@ pub fn create_pipeline(swapchain_size: vk::Extent2D, device: &ash::Device) -> vk
         p_next: null(),
         flags: Default::default(),
         viewport_count: 1,
-        p_viewports: &viewport,
+        p_viewports: null(),
         scissor_count: 1,
-        p_scissors: &scissor,
+        p_scissors: null(),
         _marker: Default::default(),
     };
 
@@ -623,12 +703,160 @@ pub fn create_pipeline(swapchain_size: vk::Extent2D, device: &ash::Device) -> vk
         _marker: Default::default(),
     };
 
-    let pipeline = unsafe {
-        device
+    let pipeline_layout = unsafe {
+        logical_device
             .create_pipeline_layout(&pipeline_layout_create_info, None)
             .expect("Failed to create pipeline layout!")
     };
-    pipeline
+
+    let pipline_info = vk::GraphicsPipelineCreateInfo {
+        s_type: vk::StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        stage_count: stages.len() as u32,
+        p_stages: stages.as_ptr(),
+        p_vertex_input_state: &pipeline_vertex_input_state as *const vk::PipelineVertexInputStateCreateInfo,
+        p_input_assembly_state: &input_assembly_state as *const vk::PipelineInputAssemblyStateCreateInfo,
+        p_tessellation_state: null(),
+        p_viewport_state: &viewport_state as *const vk::PipelineViewportStateCreateInfo,
+        p_rasterization_state: &rasterizer as *const vk::PipelineRasterizationStateCreateInfo,
+        p_multisample_state: &multisample_state as *const vk::PipelineMultisampleStateCreateInfo,
+        p_depth_stencil_state: null(),
+        p_color_blend_state: &color_blending_state as *const vk::PipelineColorBlendStateCreateInfo,
+        p_dynamic_state: &pipline_dynamic_state as *const vk::PipelineDynamicStateCreateInfo,
+        layout: pipeline_layout,
+        render_pass,
+        subpass: 0,
+        base_pipeline_handle: vk::Pipeline::null(),
+        base_pipeline_index: 0,
+        _marker: Default::default(),
+    };
+    let pipeline = unsafe {
+        logical_device
+            .create_graphics_pipelines(vk::PipelineCache::null(), &[pipline_info], None)
+            .expect("Failed to create pipeline!")
+    };
+    PipelineInfo {
+        shaders,
+        pipeline_layout,
+        render_pass,
+        pipeline,
+    }
 }
 
-pub fn init_sync() {}
+pub fn create_framebuffer(
+    device: &ash::Device,
+    swapchain_size: vk::Extent2D,
+    render_pass: vk::RenderPass,
+    image_views: &Vec<vk::ImageView>,
+) -> Vec<vk::Framebuffer> {
+    let mut vec = Vec::with_capacity(image_views.len());
+    for view in image_views.iter() {
+        let framebuffer_create_info = vk::FramebufferCreateInfo {
+            s_type: vk::StructureType::FRAMEBUFFER_CREATE_INFO,
+            p_next: null(),
+            flags: Default::default(),
+            render_pass,
+            attachment_count: 1,
+            p_attachments: view as *const vk::ImageView,
+            width: swapchain_size.width,
+            height: swapchain_size.height,
+            layers: 1,
+            _marker: Default::default(),
+        };
+        let framebuffer = unsafe { device.create_framebuffer(&framebuffer_create_info, None) }.expect("Failed to create framebuffer!");
+        vec.push(framebuffer);
+    }
+    vec
+}
+
+pub fn create_command_pool(device: &ash::Device, queue_family_indices: &QueueFamilyIndices) -> vk::CommandPool {
+    let command_pool_create_info = vk::CommandPoolCreateInfo {
+        s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
+        p_next: null(),
+        flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+        queue_family_index: queue_family_indices.graphics_family.unwrap(),
+        _marker: Default::default(),
+    };
+    unsafe { device.create_command_pool(&command_pool_create_info, None) }.expect("Failed to create command pool!")
+}
+
+pub fn create_command_buffers(device: &ash::Device, command_pool: vk::CommandPool) -> Vec<CommandBuffer> {
+    let vk_command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
+        s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
+        p_next: null(),
+        command_buffer_count: 1,
+        command_pool,
+        level: vk::CommandBufferLevel::PRIMARY,
+        _marker: Default::default(),
+    };
+    let command_buffers =
+        unsafe { device.allocate_command_buffers(&vk_command_buffer_allocate_info) }.expect("Failed to allocate command buffers!");
+    command_buffers
+}
+
+pub fn record_command_buffer(
+    command_buffer: CommandBuffer,
+    image_index: usize,
+    render_pass: &vk::RenderPass,
+    framebuffers: &Vec<vk::Framebuffer>,
+    swapchain_size: vk::Extent2D,
+    device: &ash::Device,
+    pipeline: &vk::Pipeline,
+) {
+    let clear_values = [vk::ClearValue {
+        color: vk::ClearColorValue {
+            float32: [0.0, 0.0, 0.0, 1.0],
+        },
+    }];
+    let cmd_begin_info = vk::CommandBufferBeginInfo {
+        s_type: vk::StructureType::COMMAND_BUFFER_BEGIN_INFO,
+        p_next: null(),
+        flags: vk::CommandBufferUsageFlags::empty(),
+        p_inheritance_info: null(),
+        _marker: Default::default(),
+    };
+
+    unsafe {
+        device
+            .begin_command_buffer(command_buffer, &cmd_begin_info)
+            .expect("Failed to begin command buffer!")
+    };
+
+    let render_pass_begin_info = vk::RenderPassBeginInfo {
+        s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
+        p_next: null(),
+        render_pass: *render_pass,
+        framebuffer: framebuffers[image_index],
+        render_area: vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: swapchain_size,
+        },
+        clear_value_count: 1,
+        p_clear_values: clear_values.as_ptr(),
+        _marker: Default::default(),
+    };
+
+    unsafe { device.cmd_begin_render_pass(command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE) };
+    unsafe {
+        device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, *pipeline);
+    }
+
+    let viewport = vk::Viewport {
+        x: 0.0,
+        y: 0.0,
+        width: swapchain_size.width as f32,
+        height: swapchain_size.height as f32,
+        min_depth: 0.0,
+        max_depth: 1.0,
+    };
+    let scissor = vk::Rect2D {
+        offset: vk::Offset2D { x: 0, y: 0 },
+        extent: swapchain_size,
+    };
+    unsafe { device.cmd_set_viewport(command_buffer, 0, &[viewport]) };
+    unsafe { device.cmd_set_scissor(command_buffer, 0, &[scissor]) };
+    unsafe { device.cmd_draw(command_buffer, 3, 1, 0, 0) };
+    unsafe { device.cmd_end_render_pass(command_buffer) };
+    unsafe { device.end_command_buffer(command_buffer).expect("Failed to end command buffer!") };
+}
