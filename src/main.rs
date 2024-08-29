@@ -93,7 +93,7 @@ impl Vulkan {
     pub fn record_command_buffer(&self, command_buffer: &CommandBuffer, image_index: u32) {
         let clear_values = [vk::ClearValue {
             color: vk::ClearColorValue {
-                float32: [0.5, 0.0, 0.0, 1.0],
+                float32: [0.0, 0.0, 0.0, 1.0],
             },
         }];
         let cmd_begin_info = vk::CommandBufferBeginInfo {
@@ -109,6 +109,7 @@ impl Vulkan {
                 .begin_command_buffer(*command_buffer, &cmd_begin_info)
                 .expect("Failed to begin command buffer!")
         };
+        println!("Framebuffer len {}", self.frame_buffers.len());
 
         let render_pass_begin_info = vk::RenderPassBeginInfo {
             s_type: vk::StructureType::RENDER_PASS_BEGIN_INFO,
@@ -159,6 +160,15 @@ impl Vulkan {
         };
     }
 
+    pub fn wait_for_device(&self) {
+        unsafe {
+            self.logical_device
+                .wait_for_fences(&[self.fence], true, u64::MAX)
+                .expect("Failed to wait for fence!");
+            self.logical_device.device_wait_idle().expect("Failed to wait for device idle!");
+        }
+    }
+
     pub fn draw_frame(&mut self) {
         unsafe {
             self.logical_device
@@ -192,6 +202,7 @@ impl Vulkan {
             p_signal_semaphores: &self.render_finished_semaphore,
             ..Default::default()
         };
+
         unsafe {
             self.logical_device
                 .queue_submit(self.queue, &[submit_info], self.fence)
@@ -267,7 +278,6 @@ impl Vulkan {
         }
 
         let logical_device = create_logical_device(&vk_instance, &selected_physical_device, &queue_family_indices);
-        let logical_device = logical_device;
         let queue = unsafe { logical_device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0) };
 
         let swap_chain_loader = khr::swapchain::Device::new(&vk_instance, &logical_device);
@@ -357,6 +367,7 @@ impl ApplicationHandler<()> for App {
             }
             CloseRequested => {
                 println!("The close button was pressed; stopping");
+                self.vulkan.as_mut().unwrap().wait_for_device();
                 event_loop.exit();
             }
             _ => {}

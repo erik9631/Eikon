@@ -1,7 +1,7 @@
 use ash::vk::{CommandBuffer, ComponentMapping, ImageSubresourceRange, PhysicalDevice, SurfaceFormatKHR, SurfaceKHR};
 use ash::{ext, khr, vk};
 use std::collections::HashMap;
-use std::ffi::{c_char, c_void, CStr};
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr::null;
 use std::{fs, ptr};
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -69,6 +69,7 @@ pub unsafe extern "system" fn debug_callback(
             print!("[Warning]");
         }
         vk::DebugUtilsMessageSeverityFlagsEXT::INFO => {
+            return vk::FALSE;
             print!("[Info]");
         }
         vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => {
@@ -81,9 +82,11 @@ pub unsafe extern "system" fn debug_callback(
 
     match message_type {
         vk::DebugUtilsMessageTypeFlagsEXT::GENERAL => {
+            return vk::FALSE;
             print!("[General]");
         }
         vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE => {
+            return vk::FALSE;
             print!("[Performance]");
         }
         vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION => {
@@ -571,12 +574,14 @@ pub fn create_pipeline(logical_device: &ash::Device, format: &SurfaceFormatKHR) 
     let shaders = load_shaders(&logical_device, "cshaders");
     let render_pass = create_render_pass(&logical_device, format);
 
+    let main_function_name = CString::new("main").unwrap(); // the beginning function name in shader code.
+
     let vertex_shader_stage_info = vk::PipelineShaderStageCreateInfo {
         s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
         p_next: null(),
         flags: Default::default(),
         module: shaders["vshader"],
-        p_name: b"main\0".as_ptr() as *const c_char,
+        p_name: main_function_name.as_ptr(),
         p_specialization_info: null(),
         stage: vk::ShaderStageFlags::VERTEX,
         _marker: Default::default(),
@@ -587,7 +592,7 @@ pub fn create_pipeline(logical_device: &ash::Device, format: &SurfaceFormatKHR) 
         p_next: null(),
         flags: Default::default(),
         module: shaders["fshader"],
-        p_name: b"main\0".as_ptr() as *const c_char,
+        p_name: main_function_name.as_ptr(),
         p_specialization_info: null(),
         stage: vk::ShaderStageFlags::FRAGMENT,
         _marker: Default::default(),
@@ -595,14 +600,6 @@ pub fn create_pipeline(logical_device: &ash::Device, format: &SurfaceFormatKHR) 
     let stages = [vertex_shader_stage_info, fragment_shader_stage_info];
 
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-    let pipline_dynamic_state = vk::PipelineDynamicStateCreateInfo {
-        s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        p_next: null(),
-        flags: Default::default(),
-        dynamic_state_count: 2,
-        p_dynamic_states: dynamic_states.as_ptr(),
-        _marker: Default::default(),
-    };
 
     let pipeline_vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
         s_type: vk::StructureType::PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -642,8 +639,8 @@ pub fn create_pipeline(logical_device: &ash::Device, format: &SurfaceFormatKHR) 
         depth_clamp_enable: vk::FALSE,
         rasterizer_discard_enable: vk::FALSE,
         polygon_mode: vk::PolygonMode::FILL,
-        cull_mode: vk::CullModeFlags::BACK,
-        front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+        cull_mode: vk::CullModeFlags::NONE,
+        front_face: vk::FrontFace::CLOCKWISE,
         depth_bias_enable: 0,
         depth_bias_constant_factor: 0.0,
         depth_bias_clamp: 0.0,
@@ -672,8 +669,8 @@ pub fn create_pipeline(logical_device: &ash::Device, format: &SurfaceFormatKHR) 
         color_blend_op: vk::BlendOp::ADD,
         src_alpha_blend_factor: vk::BlendFactor::ONE,
         dst_alpha_blend_factor: vk::BlendFactor::ZERO,
-        alpha_blend_op: Default::default(),
-        color_write_mask: Default::default(),
+        alpha_blend_op: Default::default(), // vk::BlendOp::ADD,
+        color_write_mask: vk::ColorComponentFlags::R | vk::ColorComponentFlags::G | vk::ColorComponentFlags::B | vk::ColorComponentFlags::A,
     };
 
     let color_blending_state = vk::PipelineColorBlendStateCreateInfo {
@@ -685,6 +682,15 @@ pub fn create_pipeline(logical_device: &ash::Device, format: &SurfaceFormatKHR) 
         attachment_count: 1,
         p_attachments: &color_blending_attachment as *const vk::PipelineColorBlendAttachmentState,
         blend_constants: [0.0, 0.0, 0.0, 0.0],
+        _marker: Default::default(),
+    };
+
+    let pipline_dynamic_state = vk::PipelineDynamicStateCreateInfo {
+        s_type: vk::StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        p_next: null(),
+        flags: Default::default(),
+        dynamic_state_count: 2,
+        p_dynamic_states: dynamic_states.as_ptr(),
         _marker: Default::default(),
     };
 

@@ -1,6 +1,6 @@
 [package]
 name = "eikon"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2021"
 authors = ["erik9631@gmail.com"]
 description = "High performance rendering engine. Supports both CPU and GPU rendering"
@@ -17,5 +17,6 @@ nalgebra = "0.33.0"
 ash = "0.38.0"
 
 [[bin]]
+build = "build.rs"
 name = "eikon"
 path = "src/main.rs"
