@@ -109,14 +109,14 @@ impl BaseConfig {
     }
 }
 
-pub struct VulkanBase {
+pub struct Base {
     ash_instance: ash::Entry,
     vulkan_instance: ash::Instance,
     utils_instance: ash::ext::debug_utils::Instance,
     debug_messenger: vk::DebugUtilsMessengerEXT,
 }
 
-impl VulkanBase {
+impl Base {
     fn new(config: BaseConfig) -> Result<Self, Error> {
         let ash_instance = unsafe { fatal_unwrap!(ash::Entry::load(), "Failed to create entry") };
         config
@@ -178,7 +178,7 @@ impl VulkanBase {
     }
 }
 
-impl Drop for VulkanBase {
+impl Drop for Base {
     fn drop(&mut self) {
         unsafe {
             self.utils_instance.destroy_debug_utils_messenger(self.debug_messenger, None);
