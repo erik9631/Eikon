@@ -36,7 +36,7 @@ pub unsafe extern "system" fn debug_callback(
     vk::FALSE
 }
 
-pub struct BaseConfig {
+pub struct BaseConfigurator {
     application_name: CString,
     engine_name: CString,
     validation_layers: Vec<CString>,
@@ -46,7 +46,7 @@ pub struct BaseConfig {
     vulkan_extensions: Vec<CString>,
 }
 
-impl BaseConfig {
+impl BaseConfigurator {
     pub fn new(
         application_name: &str,
         engine_name: &str,
@@ -117,7 +117,7 @@ pub struct Base {
 }
 
 impl Base {
-    fn new(config: BaseConfig) -> Result<Self, Error> {
+    fn new(config: BaseConfigurator) -> Result<Self, Error> {
         let ash_instance = unsafe { fatal_unwrap!(ash::Entry::load(), "Failed to create entry") };
         config
             .validate_layer_availability(&ash_instance)
