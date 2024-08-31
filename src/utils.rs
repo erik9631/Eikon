@@ -6,6 +6,16 @@ use std::ptr::null;
 use std::{fs, ptr};
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 
+#[macro_export]
+macro_rules! fatal_unwrap {
+    ($e:expr, $str:expr) => {
+        $e.unwrap_or_else(|e| {
+            error!($str, e);
+            std::process::exit(1);
+        })
+    };
+}
+
 pub struct PipelineInfo {
     pub shaders: HashMap<&'static str, vk::ShaderModule>,
     pub pipeline_layout: vk::PipelineLayout,
@@ -18,7 +28,7 @@ pub struct QueueFamilyIndices {
     pub surface_family: Option<u32>,
     pub priorities: [f32; 1],
 }
-pub struct SwapChainSupportDetails {
+pub struct SurfaceProperties {
     pub surface_capabilities: vk::SurfaceCapabilitiesKHR,
     pub formats: Vec<vk::SurfaceFormatKHR>,
     pub present_modes: Vec<vk::PresentModeKHR>,
@@ -151,12 +161,12 @@ pub fn create_vulcan_instance(
     unsafe { entry.create_instance(&create_info, None).expect("Failed to create instance!") }
 }
 
-pub fn get_swapchain_support(
+pub fn get_surface_properties(
     surface_loader: &khr::surface::Instance,
     physical_device: &PhysicalDevice,
     surface: SurfaceKHR,
-) -> SwapChainSupportDetails {
-    let capabilities = unsafe {
+) -> SurfaceProperties {
+    let surface_capabilities = unsafe {
         surface_loader
             .get_physical_device_surface_capabilities(*physical_device, surface)
             .expect("Failed to get surface capabilities")
@@ -171,8 +181,8 @@ pub fn get_swapchain_support(
             .get_physical_device_surface_present_modes(*physical_device, surface)
             .expect("Failed to get surface present modes")
     };
-    SwapChainSupportDetails {
-        surface_capabilities: capabilities,
+    SurfaceProperties {
+        surface_capabilities,
         formats,
         present_modes,
     }
@@ -206,7 +216,7 @@ pub fn get_queue_families(
     vulcan_instance: &ash::Instance,
     device: &PhysicalDevice,
     surface_loader: &khr::surface::Instance,
-    surface: vk::SurfaceKHR,
+    surface: SurfaceKHR,
 ) -> QueueFamilyIndices {
     let queue_families = unsafe { vulcan_instance.get_physical_device_queue_family_properties(*device) };
     let mut graphics_family = QueueFamilyIndices::new(None);
@@ -295,9 +305,9 @@ pub fn pick_physical_device(
                 return false;
             }
 
-            let swapchain_support = get_swapchain_support(surface_loader, physical_device, surface);
+            let surface_properties = get_surface_properties(surface_loader, physical_device, surface);
 
-            if swapchain_support.formats.is_empty() | swapchain_support.present_modes.is_empty() {
+            if surface_properties.formats.is_empty() | surface_properties.present_modes.is_empty() {
                 return false;
             }
             return true;
@@ -317,7 +327,7 @@ pub fn create_logical_device(
     physical_device: &PhysicalDevice,
     queue_family_indices: &QueueFamilyIndices,
 ) -> ash::Device {
-    let surface_info = vk::DeviceQueueCreateInfo {
+    let graphics_queue = vk::DeviceQueueCreateInfo {
         s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
         p_next: null(),
         flags: Default::default(),
@@ -327,7 +337,7 @@ pub fn create_logical_device(
         p_queue_priorities: queue_family_indices.priorities.as_ptr(),
     };
 
-    let graphics_info = vk::DeviceQueueCreateInfo {
+    let surface_queue = vk::DeviceQueueCreateInfo {
         s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
         p_next: null(),
         flags: Default::default(),
@@ -342,7 +352,7 @@ pub fn create_logical_device(
         count = 2;
     }
 
-    let device_queues = [graphics_info, surface_info];
+    let device_queues = [surface_queue, graphics_queue];
     let physical_device_features = vk::PhysicalDeviceFeatures { ..Default::default() };
 
     let create_device_info = vk::DeviceCreateInfo {
@@ -365,7 +375,7 @@ pub fn create_logical_device(
     }
 }
 
-pub fn select_surface_format(swapchain_support: &SwapChainSupportDetails) -> vk::SurfaceFormatKHR {
+pub fn select_surface_format(swapchain_support: &SurfaceProperties) -> vk::SurfaceFormatKHR {
     for format in swapchain_support.formats.iter() {
         if format.format == vk::Format::B8G8R8_SRGB && format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR {
             return *format;
@@ -374,7 +384,7 @@ pub fn select_surface_format(swapchain_support: &SwapChainSupportDetails) -> vk:
     swapchain_support.formats[0]
 }
 
-pub fn select_present_mode(swapchain_support: &SwapChainSupportDetails) -> vk::PresentModeKHR {
+pub fn select_present_mode(swapchain_support: &SurfaceProperties) -> vk::PresentModeKHR {
     for mode in swapchain_support.present_modes.iter() {
         if *mode == vk::PresentModeKHR::FIFO {
             return *mode;
@@ -383,7 +393,7 @@ pub fn select_present_mode(swapchain_support: &SwapChainSupportDetails) -> vk::P
     swapchain_support.present_modes[0]
 }
 
-pub fn select_swap_size(swapchain_support: &SwapChainSupportDetails, window: &winit::window::Window) -> vk::Extent2D {
+pub fn select_swap_size(swapchain_support: &SurfaceProperties, window: &winit::window::Window) -> vk::Extent2D {
     // If it is already set, the surface must be fixed and pre-configured. We can't change it.
     if swapchain_support.surface_capabilities.current_extent.width != u32::MAX {
         return swapchain_support.surface_capabilities.current_extent;
@@ -402,14 +412,14 @@ pub fn select_swap_size(swapchain_support: &SwapChainSupportDetails, window: &wi
 
 pub fn create_swap_chain(
     swap_chain_loader: &khr::swapchain::Device,
-    swapchain_support: &SwapChainSupportDetails,
+    surface_properties: &SurfaceProperties,
     surface: SurfaceKHR,
     queue_family_indices: &QueueFamilyIndices,
     window: &winit::window::Window,
 ) -> (vk::SwapchainKHR, SurfaceFormatKHR, vk::Extent2D) {
-    let surface_format = select_surface_format(swapchain_support);
-    let present_mode = select_present_mode(swapchain_support);
-    let extent = select_swap_size(swapchain_support, &window);
+    let surface_format = select_surface_format(surface_properties);
+    let present_mode = select_present_mode(surface_properties);
+    let extent = select_swap_size(surface_properties, &window);
     let mut image_sharing_mode = vk::SharingMode::EXCLUSIVE;
     let mut queue_family_index_count = 0;
     let mut p_queue_family_indices = null();
@@ -427,7 +437,7 @@ pub fn create_swap_chain(
         p_next: null(),
         flags: Default::default(),
         surface,
-        min_image_count: swapchain_support.surface_capabilities.min_image_count + 1,
+        min_image_count: surface_properties.surface_capabilities.min_image_count + 1,
         image_format: surface_format.format,
         image_color_space: surface_format.color_space,
         image_extent: extent,
@@ -436,7 +446,7 @@ pub fn create_swap_chain(
         image_sharing_mode,
         queue_family_index_count,
         p_queue_family_indices,
-        pre_transform: swapchain_support.surface_capabilities.current_transform,
+        pre_transform: surface_properties.surface_capabilities.current_transform,
         composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
         present_mode,
         clipped: vk::TRUE,

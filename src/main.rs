@@ -1,7 +1,7 @@
 use crate::utils::{
     create_command_buffers, create_command_pool, create_framebuffer, create_image_views, create_logical_device, create_messenger_info,
     create_pipeline, create_surface, create_swap_chain, create_sync_objects, create_validation_layers_requirements, create_vulcan_instance,
-    get_queue_families, get_swapchain_support, pick_physical_device, PipelineInfo, QueueFamilyIndices,
+    get_queue_families, get_surface_properties, pick_physical_device, PipelineInfo, QueueFamilyIndices,
 };
 use ash::vk::{CommandBuffer, PhysicalDevice, SurfaceFormatKHR};
 use ash::{khr, vk};
@@ -26,9 +26,10 @@ pub struct Vulkan {
     surface_loader: khr::surface::Instance,
     queue_family_indices: QueueFamilyIndices,
     logical_device: ash::Device,
-    queue: vk::Queue,
+    device_graphics_queue: vk::Queue,
+    device_surface_queue: vk::Queue,
     surface: vk::SurfaceKHR,
-    swap_chain_loader: khr::swapchain::Device,
+    swap_chain_instance: khr::swapchain::Device,
     swapchain: vk::SwapchainKHR,
     swapchain_size: vk::Extent2D,
     surface_format: SurfaceFormatKHR,
@@ -36,7 +37,7 @@ pub struct Vulkan {
     pipeline_info: PipelineInfo,
     frame_buffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
-    command_buffers: Vec<vk::CommandBuffer>,
+    command_buffers: Vec<CommandBuffer>,
     image_available_semaphore: vk::Semaphore,
     render_finished_semaphore: vk::Semaphore,
     fence: vk::Fence,
@@ -47,7 +48,7 @@ impl Drop for Vulkan {
         unsafe {
             self.runtime_debugger
                 .destroy_debug_utils_messenger(self.debug_utils_messenger, None);
-            self.swap_chain_loader.destroy_swapchain(self.swapchain, None);
+            self.swap_chain_instance.destroy_swapchain(self.swapchain, None);
             self.surface_loader.destroy_surface(self.surface, None);
             self.logical_device.destroy_semaphore(self.image_available_semaphore, None);
             self.logical_device.destroy_semaphore(self.render_finished_semaphore, None);
@@ -89,7 +90,6 @@ impl Vulkan {
         };
         (debug_utils, result)
     }
-
     pub fn record_command_buffer(&self, command_buffer: &CommandBuffer, image_index: u32) {
         let clear_values = [vk::ClearValue {
             color: vk::ClearColorValue {
@@ -177,7 +177,7 @@ impl Vulkan {
         }
         unsafe { self.logical_device.reset_fences(&[self.fence]).expect("Failed to reset fence!") };
         let (current_index, _) = unsafe {
-            self.swap_chain_loader
+            self.swap_chain_instance
                 .acquire_next_image(self.swapchain, u64::MAX, self.image_available_semaphore, vk::Fence::null())
                 .expect("Failed to acquire next image!")
         };
@@ -205,7 +205,7 @@ impl Vulkan {
 
         unsafe {
             self.logical_device
-                .queue_submit(self.queue, &[submit_info], self.fence)
+                .queue_submit(self.device_graphics_queue, &[submit_info], self.fence)
                 .expect("Failed to submit command buffer!")
         };
 
@@ -220,7 +220,7 @@ impl Vulkan {
             p_results: null_mut(),
             _marker: Default::default(),
         };
-        unsafe { self.swap_chain_loader.queue_present(self.queue, &present_info) }.expect("TODO: panic message");
+        unsafe { self.swap_chain_instance.queue_present(self.device_surface_queue, &present_info) }.expect("TODO: panic message");
     }
 
     fn verify_validation_layers(entry: &ash::Entry, mut layers: HashMap<&'static str, (&'static str, bool)>) -> Vec<*const c_char> {
@@ -269,22 +269,21 @@ impl Vulkan {
         let surface = create_surface(&ash_entry, &vk_instance, window);
 
         let selected_physical_device = pick_physical_device(&vk_instance, &surface_loader, surface)[0];
-
         let queue_family_indices = get_queue_families(&vk_instance, &selected_physical_device, &surface_loader, surface);
-        let queue_family_indices = queue_family_indices;
 
         if queue_family_indices.graphics_family.is_none() {
             panic!("No graphics queue family found");
         }
 
         let logical_device = create_logical_device(&vk_instance, &selected_physical_device, &queue_family_indices);
-        let queue = unsafe { logical_device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0) };
+        let device_graphics_queue = unsafe { logical_device.get_device_queue(queue_family_indices.graphics_family.unwrap(), 0) };
+        let device_surface_queue = unsafe { logical_device.get_device_queue(queue_family_indices.surface_family.unwrap(), 0) };
 
-        let swap_chain_loader = khr::swapchain::Device::new(&vk_instance, &logical_device);
-        let swapchain_support = get_swapchain_support(&surface_loader, &selected_physical_device, surface);
+        let swap_chain_instance = khr::swapchain::Device::new(&vk_instance, &logical_device);
+        let surface_properties = get_surface_properties(&surface_loader, &selected_physical_device, surface);
         let (swapchain, surface_format, swapchain_size) =
-            create_swap_chain(&swap_chain_loader, &swapchain_support, surface, &queue_family_indices, &window);
-        let image_views = create_image_views(&logical_device, &swap_chain_loader, &surface_format, &swapchain);
+            create_swap_chain(&swap_chain_instance, &surface_properties, surface, &queue_family_indices, &window);
+        let image_views = create_image_views(&logical_device, &swap_chain_instance, &surface_format, &swapchain);
         let pipeline_info = create_pipeline(&logical_device, &surface_format);
         let frame_buffers = create_framebuffer(&logical_device, swapchain_size, pipeline_info.render_pass, &image_views);
         let command_pool = create_command_pool(&logical_device, &queue_family_indices);
@@ -300,9 +299,10 @@ impl Vulkan {
             selected_physical_device,
             queue_family_indices,
             logical_device,
-            queue,
+            device_graphics_queue,
+            device_surface_queue,
             surface,
-            swap_chain_loader,
+            swap_chain_instance,
             swapchain,
             surface_format,
             image_views,
