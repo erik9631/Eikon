@@ -110,10 +110,10 @@ impl BaseConfigurator {
 }
 
 pub struct Base {
-    ash_instance: ash::Entry,
-    vulkan_instance: ash::Instance,
-    utils_instance: ash::ext::debug_utils::Instance,
-    debug_messenger: vk::DebugUtilsMessengerEXT,
+    pub ash_instance: ash::Entry,
+    pub vulkan_instance: ash::Instance,
+    pub utils_instance: ash::ext::debug_utils::Instance,
+    pub debug_messenger: vk::DebugUtilsMessengerEXT,
 }
 
 impl Base {

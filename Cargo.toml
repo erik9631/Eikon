@@ -12,7 +12,7 @@ build = "build.rs"
 [dependencies]
 log = "0.4.22"
 winit = "0.30.5"
-eta-algorithms = "1.5.4"
+eta-algorithms = "1.6.0"
 nalgebra = "0.33.0"
 ash = "0.38.0"
 

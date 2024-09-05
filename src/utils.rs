@@ -7,11 +7,18 @@ use std::{fs, ptr};
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 
 #[macro_export]
+macro_rules! fatal_assert {
+    ($($arg:tt)+) => {{
+        error!($($arg)+);
+        std::process::exit(1);
+    }};
+}
+
+#[macro_export]
 macro_rules! fatal_unwrap {
     ($e:expr, $str:expr) => {
         $e.unwrap_or_else(|e| {
-            error!($str, e);
-            std::process::exit(1);
+            fatal_assert!($str, e);
         })
     };
 }
@@ -192,6 +199,8 @@ pub fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &win
     let raw_window_handle = window.raw_window_handle().expect("Failed to get raw window handle");
     match raw_window_handle {
         RawWindowHandle::Win32(raw_handle) => {
+            let win32_surface_loader = khr::win32_surface::Instance::new(&entry, &instance);
+
             let surface_info = vk::Win32SurfaceCreateInfoKHR {
                 s_type: vk::StructureType::WIN32_SURFACE_CREATE_INFO_KHR,
                 p_next: null(),
@@ -200,7 +209,7 @@ pub fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &win
                 hwnd: raw_handle.hwnd.get(),
                 _marker: Default::default(),
             };
-            let win32_surface_loader = khr::win32_surface::Instance::new(entry, instance);
+
             let platform_surface = unsafe {
                 win32_surface_loader
                     .create_win32_surface(&surface_info, None)
