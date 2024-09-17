@@ -1,24 +1,30 @@
 use crate::backend::vulkan::base::Base;
-use crate::backend::vulkan::utils::{COMPUTE_OP, GRAPHICS_OP, PRESENT_OP, TRANSFER_OP};
-use crate::{fatal_assert, fatal_unwrap};
+use crate::backend::vulkan::utils::{to_c_str_array, COMPUTE_OP, GRAPHICS_OP, PRESENT_OP, TRANSFER_OP};
+use crate::{fatal_assert, fatal_unwrap, fatal_unwrap_e};
 use ash::vk::{wl_surface, PhysicalDevice, SurfaceCapabilitiesKHR};
 use ash::{khr, vk};
 use eta_algorithms::algorithms::extract_unique_pairs;
-use log::trace;
+use log::{error, info, trace, warn};
 use std::collections::HashSet;
 use std::ffi::{c_void, CStr, CString};
 use std::mem::transmute;
 use std::ptr::null;
 use winit::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-pub fn default_device_mapper(properties: &vk::PhysicalDeviceProperties, features: &vk::PhysicalDeviceFeatures) -> bool {
+pub fn default_device_mapper(
+    properties: &vk::PhysicalDeviceProperties,
+    features: &vk::PhysicalDeviceFeatures,
+) -> bool {
     if properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
         return false;
     }
     true
 }
 
-pub fn default_queue_mapper(queue_operations: &[u32], queue_family: &[u32]) -> QueueSelections {
+pub fn default_queue_mapper(
+    queue_operations: &[u32],
+    queue_family: &[u32],
+) -> QueueSelections {
     let (operations, families) = extract_unique_pairs(queue_operations, queue_family);
     let mut queue_selections = QueueSelections::new();
     let zipped = operations.iter().zip(families.iter());
@@ -59,29 +65,22 @@ impl QueueSelections {
     }
 }
 
-struct ContextConfigurator<F, Q>
-where
-    F: FnMut(&vk::PhysicalDeviceProperties, &vk::PhysicalDeviceFeatures) -> bool,
-    Q: FnMut(&[u32], &[u32]) -> QueueSelections,
-{
-    device_mapper: F,
-    queue_mapper: Q,
+struct ContextConfigurator {
+    device_mapper: fn(&vk::PhysicalDeviceProperties, &vk::PhysicalDeviceFeatures) -> bool,
+    queue_mapper: fn(&[u32], &[u32]) -> QueueSelections,
     device_extensions: Vec<CString>,
     raw_window_handle: RawWindowHandle,
     raw_display_handle: RawDisplayHandle,
 }
 
-impl<F, Q> ContextConfigurator<F, Q>
-where
-    F: FnMut(&vk::PhysicalDeviceProperties, &vk::PhysicalDeviceFeatures) -> bool,
-    Q: FnMut(&[u32], &[u32]) -> QueueSelections,
-{
-    pub fn new(raw_window_handle: RawWindowHandle, raw_display_handle: RawDisplayHandle, device_extensions: &[&str]) -> Self {
+impl ContextConfigurator {
+    pub fn new(
+        raw_window_handle: RawWindowHandle,
+        raw_display_handle: RawDisplayHandle,
+        device_extensions: &[&str],
+    ) -> Self {
         Self {
-            device_extensions: device_extensions
-                .iter()
-                .map(|extension| CString::new(*extension).unwrap())
-                .collect(),
+            device_extensions: to_c_str_array(device_extensions),
             device_mapper: default_device_mapper,
             queue_mapper: default_queue_mapper,
             raw_window_handle,
@@ -89,11 +88,10 @@ where
         }
     }
 
-    pub fn create_surface<F, Q>(&self, base: &Base) -> (vk::SurfaceKHR, khr::surface::Instance)
-    where
-        F: FnMut(&vk::PhysicalDeviceProperties, &vk::PhysicalDeviceFeatures) -> bool,
-        Q: FnMut(&[u32], &[u32]) -> QueueSelections,
-    {
+    pub fn create_surface(
+        &self,
+        base: &Base,
+    ) -> (vk::SurfaceKHR, khr::surface::Instance) {
         let surface_instance = khr::surface::Instance::new(&base.ash_instance, &base.vulkan_instance);
         let raw_window_handle = self.raw_window_handle;
         match raw_window_handle {
@@ -110,9 +108,9 @@ where
                 };
 
                 let platform_surface = unsafe {
-                    fatal_unwrap!(
+                    fatal_unwrap_e!(
                         win32_surface_loader.create_win32_surface(&surface_info, None),
-                        "Failed to create surface!"
+                        "Failed to create surface! {}"
                     )
                 };
                 (platform_surface, surface_instance)
@@ -135,16 +133,16 @@ where
                     _marker: Default::default(),
                 };
                 let platform_surface = unsafe {
-                    fatal_unwrap!(
+                    fatal_unwrap_e!(
                         wayland_surface_loader.create_wayland_surface(&surface_info, None),
-                        "Failed to create surface!"
+                        "Failed to create surface! {}"
                     )
                 };
                 (platform_surface, surface_instance)
             }
             RawWindowHandle::Xcb(raw_handle) => {
                 let xcb_surface_loader = khr::xcb_surface::Instance::new(&base.ash_instance, &base.vulkan_instance);
-                let display = match self.raw_display_handle {
+                let mut display = match self.raw_display_handle {
                     RawDisplayHandle::Xcb(display) => display,
                     _ => fatal_assert!("XCB surfaces must be created with a XCB display handle!"),
                 };
@@ -158,9 +156,9 @@ where
                     _marker: Default::default(),
                 };
                 let platform_surface = unsafe {
-                    fatal_unwrap!(
+                    fatal_unwrap_e!(
                         xcb_surface_loader.create_xcb_surface(&surface_info, None),
-                        "Failed to create surface!"
+                        "Failed to create surface! {}"
                     )
                 };
                 (platform_surface, surface_instance)
@@ -181,9 +179,9 @@ where
                     _marker: Default::default(),
                 };
                 let platform_surface = unsafe {
-                    fatal_unwrap!(
+                    fatal_unwrap_e!(
                         xlib_surface_loader.create_xlib_surface(&surface_info, None),
-                        "Failed to create surface!"
+                        "Failed to create surface! {}"
                     )
                 };
                 (platform_surface, surface_instance)
@@ -195,18 +193,22 @@ where
         }
     }
 
-    fn validate_physical_device_extensions<F, Q>(&self, base: &Base, physical_device: vk::PhysicalDevice) -> bool {
+    fn validate_physical_device_extensions(
+        &self,
+        base: &Base,
+        physical_device: vk::PhysicalDevice,
+    ) -> bool {
         let device_extensions = unsafe {
-            fatal_unwrap!(
+            fatal_unwrap_e!(
                 base.vulkan_instance.enumerate_device_extension_properties(physical_device),
-                "Failed to enumerate device extensions"
+                "Failed to enumerate device extensions {}"
             )
         };
-        let mut extension_req: HashSet<CString> = self.device_extensions.iter().map(|extension| *extension).collect();
+        let mut extension_req: HashSet<CString> = self.device_extensions.iter().map(|extension| extension.clone()).collect();
         for extension in device_extensions.iter() {
             let extension_name = unsafe { CStr::from_ptr(extension.extension_name.as_ptr()) };
-            if let None = extension_req.remove(extension_name) {
-                trace!("Unsupported device extension found: {:?}", extension);
+            if !extension_req.remove(extension_name) {
+                trace!("Unsupported device extension found: {:?}", extension_name);
                 return false;
             }
         }
@@ -218,28 +220,28 @@ where
         true
     }
 
-    fn validate_surface_support<F, Q>(
+    fn validate_surface_support(
         &self,
         surface_instance: &khr::surface::Instance,
-        physical_device: &vk::PhysicalDevice,
+        physical_device: &PhysicalDevice,
         surface: &vk::SurfaceKHR,
     ) -> Option<SurfaceProperties> {
         let surface_capabilities = unsafe {
-            fatal_unwrap!(
+            fatal_unwrap_e!(
                 surface_instance.get_physical_device_surface_capabilities(*physical_device, *surface),
-                "Failed to get surface capabilities!"
+                "Failed to get surface capabilities! {}"
             )
         };
         let formats = unsafe {
-            fatal_unwrap!(
+            fatal_unwrap_e!(
                 surface_instance.get_physical_device_surface_formats(*physical_device, *surface),
-                "Failed to get surface formats!"
+                "Failed to get surface formats! {}"
             )
         };
         let present_modes = unsafe {
-            fatal_unwrap!(
+            fatal_unwrap_e!(
                 surface_instance.get_physical_device_surface_present_modes(*physical_device, *surface),
-                "Failed to get surface present modes!"
+                "Failed to get surface present modes! {}"
             )
         };
         if formats.is_empty() || present_modes.is_empty() {
@@ -254,20 +256,16 @@ where
         Some(properties)
     }
 
-    fn obtain_physical_devices<F, Q>(
+    fn obtain_physical_devices(
         &self,
         base: &Base,
         surface_instance: &khr::surface::Instance,
         surface: &vk::SurfaceKHR,
-    ) -> (Vec<vk::PhysicalDevice>, Vec<SurfaceProperties>)
-    where
-        F: FnMut(&vk::PhysicalDeviceProperties, &vk::PhysicalDeviceFeatures) -> bool,
-        Q: FnMut(&[u32], &[u32]) -> QueueSelections,
-    {
+    ) -> (Vec<vk::PhysicalDevice>, Vec<SurfaceProperties>) {
         let checked_devices = unsafe {
-            fatal_unwrap!(
+            fatal_unwrap_e!(
                 base.vulkan_instance.enumerate_physical_devices(),
-                "Failed to enumerate physical devices!"
+                "Failed to enumerate physical devices! {}"
             )
         };
         let mut devices = Vec::with_capacity(checked_devices.len());
@@ -319,9 +317,9 @@ where
                 families.push(index as u32);
             }
             let surface_support = unsafe {
-                fatal_unwrap!(
+                fatal_unwrap_e!(
                     surface_instance.get_physical_device_surface_support(*physical_device, index as u32, *surface),
-                    "Failed to get surface support"
+                    "Failed to get surface support {}"
                 )
             };
             if surface_support {
@@ -334,11 +332,11 @@ where
     }
 }
 
-struct Context<'a> {
+struct Context {
     base: Base,
     surface_instance: khr::surface::Instance,
     surface: vk::SurfaceKHR,
-    physical_devices: Vec<vk::PhysicalDevice>,
+    physical_devices: Vec<PhysicalDevice>,
     physical_device_surface_properties: Vec<SurfaceProperties>,
     transfer_queue: vk::Queue,
     graphics_queue: vk::Queue,
@@ -348,11 +346,10 @@ struct Context<'a> {
 }
 
 impl Context {
-    pub fn new<F, Q>(base: Base, configurator: ContextConfigurator<F, Q>) -> Self
-    where
-        F: FnMut(&vk::PhysicalDeviceProperties, &vk::PhysicalDeviceFeatures) -> bool,
-        Q: FnMut(&[u32], &[u32]) -> QueueSelections,
-    {
+    pub fn new<F, Q>(
+        base: Base,
+        configurator: ContextConfigurator,
+    ) -> Self {
         let (surface, surface_instance) = configurator.create_surface(&base);
         let (physical_devices, physical_device_surface_properties) =
             configurator.obtain_physical_devices(&base, &surface_instance, &surface);

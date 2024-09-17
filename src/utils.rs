@@ -5,7 +5,6 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr::null;
 use std::{fs, ptr};
 use winit::raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-
 #[macro_export]
 macro_rules! fatal_assert {
     ($($arg:tt)+) => {{
@@ -15,10 +14,18 @@ macro_rules! fatal_assert {
 }
 
 #[macro_export]
-macro_rules! fatal_unwrap {
+macro_rules! fatal_unwrap_e {
     ($e:expr, $str:expr) => {
         $e.unwrap_or_else(|e| {
             fatal_assert!($str, e);
+        })
+    };
+}
+#[macro_export]
+macro_rules! fatal_unwrap {
+    ($e:expr, $str:expr) => {
+        $e.unwrap_or_else(|| {
+            fatal_assert!($str);
         })
     };
 }
@@ -86,7 +93,7 @@ pub unsafe extern "system" fn debug_callback(
             print!("[Warning]");
         }
         vk::DebugUtilsMessageSeverityFlagsEXT::INFO => {
-            return vk::FALSE;
+            // return vk::FALSE;
             print!("[Info]");
         }
         vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => {
@@ -99,11 +106,11 @@ pub unsafe extern "system" fn debug_callback(
 
     match message_type {
         vk::DebugUtilsMessageTypeFlagsEXT::GENERAL => {
-            return vk::FALSE;
+            // return vk::FALSE;
             print!("[General]");
         }
         vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE => {
-            return vk::FALSE;
+            // return vk::FALSE;
             print!("[Performance]");
         }
         vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION => {
@@ -195,7 +202,11 @@ pub fn get_surface_properties(
     }
 }
 
-pub fn create_surface(entry: &ash::Entry, instance: &ash::Instance, window: &winit::window::Window) -> vk::SurfaceKHR {
+pub fn create_surface(
+    entry: &ash::Entry,
+    instance: &ash::Instance,
+    window: &winit::window::Window,
+) -> vk::SurfaceKHR {
     let raw_window_handle = window.raw_window_handle().expect("Failed to get raw window handle");
     match raw_window_handle {
         RawWindowHandle::Win32(raw_handle) => {
@@ -261,7 +272,10 @@ pub fn get_queue_families(
     graphics_family
 }
 
-pub fn check_device_extension_support(vulcan_instance: &ash::Instance, device: &PhysicalDevice) -> bool {
+pub fn check_device_extension_support(
+    vulcan_instance: &ash::Instance,
+    device: &PhysicalDevice,
+) -> bool {
     let extensions = unsafe {
         vulcan_instance
             .enumerate_device_extension_properties(*device)
@@ -402,7 +416,10 @@ pub fn select_present_mode(swapchain_support: &SurfaceProperties) -> vk::Present
     swapchain_support.present_modes[0]
 }
 
-pub fn select_swap_size(swapchain_support: &SurfaceProperties, window: &winit::window::Window) -> vk::Extent2D {
+pub fn select_swap_size(
+    swapchain_support: &SurfaceProperties,
+    window: &winit::window::Window,
+) -> vk::Extent2D {
     // If it is already set, the surface must be fixed and pre-configured. We can't change it.
     if swapchain_support.surface_capabilities.current_extent.width != u32::MAX {
         return swapchain_support.surface_capabilities.current_extent;
@@ -504,7 +521,10 @@ pub fn create_image_views(
     swapchain_image_views
 }
 
-pub fn load_shaders(logical_device: &ash::Device, shader_dir: &str) -> HashMap<&'static str, vk::ShaderModule> {
+pub fn load_shaders(
+    logical_device: &ash::Device,
+    shader_dir: &str,
+) -> HashMap<&'static str, vk::ShaderModule> {
     let fragment_shader = fs::read(shader_dir.to_string() + "/fshader.spv").expect("Failed to read shader file");
     let vertex_shader = fs::read(shader_dir.to_string() + "/vshader.spv").expect("Failed to read shader file");
     let mut byte_shaders = Vec::with_capacity(2);
@@ -531,7 +551,10 @@ pub fn load_shaders(logical_device: &ash::Device, shader_dir: &str) -> HashMap<&
     }
     shader_modules
 }
-pub fn create_render_pass(device: &ash::Device, surface_format: &SurfaceFormatKHR) -> vk::RenderPass {
+pub fn create_render_pass(
+    device: &ash::Device,
+    surface_format: &SurfaceFormatKHR,
+) -> vk::RenderPass {
     let color_attachment = vk::AttachmentDescription {
         flags: Default::default(),
         format: surface_format.format,
@@ -589,7 +612,10 @@ pub fn create_render_pass(device: &ash::Device, surface_format: &SurfaceFormatKH
     unsafe { device.create_render_pass(&render_pass, None) }.expect("Failed to create render pass!")
 }
 
-pub fn create_pipeline(logical_device: &ash::Device, format: &SurfaceFormatKHR) -> PipelineInfo {
+pub fn create_pipeline(
+    logical_device: &ash::Device,
+    format: &SurfaceFormatKHR,
+) -> PipelineInfo {
     let shaders = load_shaders(&logical_device, "cshaders");
     let render_pass = create_render_pass(&logical_device, format);
 
@@ -791,7 +817,10 @@ pub fn create_framebuffer(
     vec
 }
 
-pub fn create_command_pool(device: &ash::Device, queue_family_indices: &QueueFamilyIndices) -> vk::CommandPool {
+pub fn create_command_pool(
+    device: &ash::Device,
+    queue_family_indices: &QueueFamilyIndices,
+) -> vk::CommandPool {
     let command_pool_create_info = vk::CommandPoolCreateInfo {
         s_type: vk::StructureType::COMMAND_POOL_CREATE_INFO,
         p_next: null(),
@@ -802,7 +831,10 @@ pub fn create_command_pool(device: &ash::Device, queue_family_indices: &QueueFam
     unsafe { device.create_command_pool(&command_pool_create_info, None) }.expect("Failed to create command pool!")
 }
 
-pub fn create_command_buffers(device: &ash::Device, command_pool: vk::CommandPool) -> Vec<CommandBuffer> {
+pub fn create_command_buffers(
+    device: &ash::Device,
+    command_pool: vk::CommandPool,
+) -> Vec<CommandBuffer> {
     let vk_command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
         s_type: vk::StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
         p_next: null(),
@@ -816,7 +848,10 @@ pub fn create_command_buffers(device: &ash::Device, command_pool: vk::CommandPoo
     command_buffers
 }
 
-pub fn create_sync_objects(device: &ash::Device, queue_family_indices: &QueueFamilyIndices) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
+pub fn create_sync_objects(
+    device: &ash::Device,
+    queue_family_indices: &QueueFamilyIndices,
+) -> (vk::Semaphore, vk::Semaphore, vk::Fence) {
     let semaphore_create_info = vk::SemaphoreCreateInfo {
         s_type: vk::StructureType::SEMAPHORE_CREATE_INFO,
         p_next: null(),

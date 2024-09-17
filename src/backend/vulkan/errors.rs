@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub enum Error {
-    ValidationLayerNotSupported(&'static str),
+    ValidationLayerNotSupported(usize),
 }

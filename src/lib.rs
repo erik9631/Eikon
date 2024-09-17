@@ -1,5 +1,6 @@
 pub mod backend;
 pub mod utils;
 
+mod log;
 #[cfg(test)]
-mod tests;
+pub mod tests;

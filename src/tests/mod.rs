@@ -1,2 +1,2 @@
 #[cfg(test)]
-mod vulkan;
+pub mod vulkan;

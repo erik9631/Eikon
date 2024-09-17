@@ -1,23 +1,54 @@
 use ash::vk;
-use ash::vk::QueueFlags;
+use std::ffi::CString;
+pub fn to_c_str(s: &str) -> CString {
+    CString::new(s).unwrap()
+}
 
-pub fn str_to_version(version: &str) -> u32 {
+#[macro_export]
+macro_rules! platform_surface_extension {
+    () => {{
+        #[cfg(target_os = "windows")]
+        {
+            khr::win32_surface::NAME.as_ptr()
+        }
+        #[cfg(all(unix, not(target_os = "android"), not(target_os = "macos")))]
+        {
+            #[cfg(feature = "wayland")]
+            {
+                khr::wayland_surface::NAME.as_ptr()
+            }
+            #[cfg(feature = "xlib")]
+            {
+                khr::xlib_surface::NAME.as_ptr()
+            }
+            #[cfg(feature = "xcb")]
+            {
+                khr::xcb_surface::NAME.as_ptr()
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            ext::metal_surface::NAME.as_ptr()
+        }
+        #[cfg(target_os = "android")]
+        {
+            khr::android_surface::NAME.as_ptr()
+        }
+    }};
+}
+
+pub fn to_c_str_array<'a, I>(s: I) -> Vec<CString>
+where
+    I: Iterator<Item = &'a &'a str>,
+{
+    s.map(|x| to_c_str(x)).collect()
+}
+pub fn to_version(version: &str) -> u32 {
     let mut version = version.split(".");
     let major = version.next().unwrap().parse::<u32>().unwrap();
     let minor = version.next().unwrap().parse::<u32>().unwrap();
     let patch = version.next().unwrap().parse::<u32>().unwrap();
     vk::make_api_version(0, major, minor, patch)
-}
-
-pub const fn from_queue_flags_to_num(queues: QueueFlags, operations: Vec<u32>) -> u32 {
-    match queues {
-        QueueFlags::GRAPHICS => GRAPHICS_OP,
-        QueueFlags::COMPUTE => COMPUTE_OP,
-        QueueFlags::TRANSFER => TRANSFER_OP,
-        QueueFlags::SPARSE_BINDING => SPARSE_BINDING_OP,
-        QueueFlags::PROTECTED => PROTECTED_OP,
-        _ => 0,
-    }
 }
 
 pub const GRAPHICS_OP: u32 = 0b1;

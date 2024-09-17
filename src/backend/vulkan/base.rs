@@ -1,8 +1,12 @@
 use crate::backend::vulkan::errors::Error;
 use crate::backend::vulkan::errors::Error::ValidationLayerNotSupported;
-use crate::backend::vulkan::utils::str_to_version;
-use crate::fatal_unwrap;
+use crate::backend::vulkan::utils::{to_c_str, to_c_str_array, to_version};
+use crate::fatal_unwrap_e;
+use crate::{fatal_assert, platform_surface_extension};
 use ash::vk;
+use ash::Entry;
+use ash::Instance;
+use ash::{ext, khr};
 use eta_algorithms::data_structs::array::Array;
 use log::{error, info, trace, warn};
 use std::collections::{HashMap, HashSet};
@@ -16,7 +20,7 @@ pub unsafe extern "system" fn debug_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut c_void,
 ) -> vk::Bool32 {
-    let log_data = CString::from_raw(p_callback_data as *mut c_char).to_str().unwrap();
+    let log_data = CStr::from_ptr((*p_callback_data).p_message as *mut c_char);
     let message_type = match message_type {
         vk::DebugUtilsMessageTypeFlagsEXT::GENERAL => "[GENERAL]",
         vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE => "[PERFORMANCE]",
@@ -26,78 +30,128 @@ pub unsafe extern "system" fn debug_callback(
     };
 
     match message_severity {
-        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => error!("[ERROR] {} {}", message_type, log_data),
-        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => warn!("[WARNING] {}", message_type, log_data),
-        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => info!("[INFO] {} {}", message_type, log_data),
-        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => trace!("[VERBOSE] {} {}", message_type, log_data),
-        _ => trace!("[UNKNOWN] {} {}", log_data),
+        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => error!("{} {:?}", message_type, log_data),
+        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => warn!("{} {:?}", message_type, log_data),
+        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => info!("{} {:?}", message_type, log_data),
+        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => trace!("{} {:?}", message_type, log_data),
+        _ => trace!("[{}] {:?}", message_type, log_data),
     };
 
     vk::FALSE
 }
 
-pub struct BaseConfigurator {
-    application_name: CString,
-    engine_name: CString,
-    validation_layers: Vec<CString>,
-    application_version: u32,
-    engine_version: u32,
-    vulkan_api_version: u32,
-    vulkan_extensions: Vec<CString>,
+pub fn default_vulkan_extensions() -> Vec<*const c_char> {
+    vec![
+        khr::surface::NAME.as_ptr(),
+        platform_surface_extension!(),
+        ext::debug_utils::NAME.as_ptr(),
+    ]
 }
 
-impl BaseConfigurator {
-    pub fn new(
-        application_name: &str,
-        engine_name: &str,
-        validation_layers: &[&str],
-        application_version: &str,
-        engine_version: &str,
-        vulkan_api_version: &str,
-        vulkan_extensions: &[&str],
-    ) -> Self {
+pub struct BaseConfigBuilder<'a> {
+    validation_layers: Option<&'a [&'a str]>,
+    vulkan_extensions: Option<&'a [&'a str]>,
+}
+
+impl<'a> BaseConfigBuilder<'a> {
+    pub fn new() -> Self {
         Self {
-            application_name: CString::new(application_name).unwrap(),
-            engine_name: CString::new(engine_name).unwrap(),
-            validation_layers: validation_layers.iter().map(|layer| CString::new(*layer).unwrap()).collect(),
-            application_version: str_to_version(application_version),
-            engine_version: str_to_version(engine_version),
-            vulkan_api_version: str_to_version(vulkan_api_version),
-            vulkan_extensions: vulkan_extensions
-                .iter()
-                .map(|extension| CString::new(*extension).unwrap())
-                .collect(),
+            validation_layers: None,
+            vulkan_extensions: None,
         }
     }
+    pub fn validation_layers(
+        mut self,
+        layers: &'a [&'a str],
+    ) -> Self {
+        self.validation_layers = Some(layers);
+        self
+    }
+    pub fn use_default_khr_validation(mut self) -> Self {
+        self.validation_layers = Some(&["VK_LAYER_KHRONOS_validation"]);
+        self
+    }
+    pub fn vulkan_extensions(
+        mut self,
+        extensions: &'a [&'a str],
+    ) -> Self {
+        self.vulkan_extensions = Some(extensions);
+        self
+    }
 
+    pub fn build(
+        mut self,
+        application_name: &'a str,
+        engine_name: &'a str,
+        vulkan_api_version: &'a str,
+        application_version: &'a str,
+        engine_version: &'a str,
+    ) -> BaseConfig {
+        if self.validation_layers.is_none() {
+            self.validation_layers = Some(&[]);
+        }
+
+        BaseConfig {
+            application_name: to_c_str(application_name),
+            engine_name: to_c_str(engine_name),
+            validation_layers: to_c_str_array(self.validation_layers.unwrap().iter()),
+            application_version: to_version(application_version),
+            engine_version: to_version(engine_version),
+            vulkan_api_version: to_version(vulkan_api_version),
+            vulkan_extensions: match self.vulkan_extensions {
+                Some(extensions) => Some(to_c_str_array(extensions.iter())),
+                None => None,
+            },
+        }
+    }
+}
+
+pub struct BaseConfig {
+    pub application_name: CString,
+    pub engine_name: CString,
+    pub validation_layers: Vec<CString>,
+    pub application_version: u32,
+    pub engine_version: u32,
+    pub vulkan_api_version: u32,
+    pub vulkan_extensions: Option<Vec<CString>>,
+}
+
+impl BaseConfig {
     /// Validates the layers that are requested to be loaded
     /// # Returns
     /// - `Ok(())` if all layers are found
     /// - `Err(layer_name)` if a layer is not found
-    pub fn validate_layer_availability(&self, ash_entry: &ash::Entry) -> Result<(), &'static str> {
+    pub fn validate_layer_availability(
+        &self,
+        ash_entry: &Entry,
+    ) -> Result<(), Error> {
         let validation_properties = unsafe {
-            fatal_unwrap!(
+            fatal_unwrap_e!(
                 ash_entry.enumerate_instance_layer_properties(),
                 "Failed to enumerate instance layer properties {}"
             )
         };
 
-        let mut layer_list: HashSet<&str> = self.validation_layers.iter().map(|layer| *layer).collect();
-        for property in validation_properties.iter() {
-            let property_name = unsafe { CStr::from_ptr(property.layer_name.as_ptr()) }.to_str().unwrap();
-            if !layer_list.remove(property_name) {
-                return Err(property_name);
-            }
+        if validation_properties.len() == 0 {
+            return Ok(());
+        }
+
+        let mut layer_list: HashSet<&CStr> = self.validation_layers.iter().map(|layer| layer.as_c_str()).collect();
+
+        for requested_layer in validation_properties.iter() {
+            let layer_name = unsafe { CStr::from_ptr(requested_layer.layer_name.as_ptr()) };
+            layer_list.remove(layer_name);
         }
         if !layer_list.is_empty() {
-            return Err(layer_list.iter().next().unwrap());
+            let offset = self.validation_layers.len() - layer_list.len();
+            return Err(ValidationLayerNotSupported(offset));
         }
         Ok(())
     }
 
     pub fn to_application_info(&self) -> vk::ApplicationInfo {
         vk::ApplicationInfo {
-            s_type: Default::default(),
+            s_type: vk::StructureType::APPLICATION_INFO,
             p_next: null(),
             p_application_name: self.application_name.as_ptr() as *const i8,
             application_version: self.application_version,
@@ -110,44 +164,26 @@ impl BaseConfigurator {
 }
 
 pub struct Base {
-    pub ash_instance: ash::Entry,
-    pub vulkan_instance: ash::Instance,
-    pub utils_instance: ash::ext::debug_utils::Instance,
+    pub ash_instance: Entry,
+    pub vulkan_instance: Instance,
+    pub utils_instance: ext::debug_utils::Instance,
     pub debug_messenger: vk::DebugUtilsMessengerEXT,
 }
 
 impl Base {
-    fn new(config: BaseConfigurator) -> Result<Self, Error> {
-        let ash_instance = unsafe { fatal_unwrap!(ash::Entry::load(), "Failed to create entry") };
-        config
-            .validate_layer_availability(&ash_instance)
-            .map_err(|layer| ValidationLayerNotSupported(layer))?;
+    pub fn new(config: BaseConfig) -> Result<Self, Error> {
+        let ash_instance = unsafe { fatal_unwrap_e!(Entry::load(), "Failed to create entry {}") };
+        config.validate_layer_availability(&ash_instance)?;
 
         let application_info = config.to_application_info();
         let validation_layers: Vec<*const c_char> = config.validation_layers.iter().map(|layer| layer.as_ptr()).collect();
-        let vulkan_extensions: Vec<*const c_char> = config.vulkan_extensions.iter().map(|layer| layer.as_ptr()).collect();
-
-        let vulkan_create_info = vk::InstanceCreateInfo {
-            s_type: Default::default(),
-            p_next: null(),
-            flags: Default::default(),
-            p_application_info: &application_info as *const vk::ApplicationInfo,
-            enabled_layer_count: config.validation_layers.len() as u32,
-            pp_enabled_layer_names: validation_layers.as_ptr(),
-            enabled_extension_count: vulkan_extensions.len() as u32,
-            pp_enabled_extension_names: vulkan_extensions.as_ptr(),
-            _marker: Default::default(),
-        };
-        let vulkan_instance = unsafe {
-            fatal_unwrap!(
-                ash_instance.create_instance(&vulkan_create_info, None),
-                "Failed to create instance!"
-            )
+        let vulkan_extensions: Vec<*const c_char> = match config.vulkan_extensions.as_ref() {
+            Some(extensions) => extensions.iter().map(|layer| layer.as_ptr()).collect(),
+            None => default_vulkan_extensions(),
         };
 
-        let utils_instance = ash::ext::debug_utils::Instance::new(&ash_instance, &vulkan_instance);
         let debug_message_info = vk::DebugUtilsMessengerCreateInfoEXT {
-            s_type: Default::default(),
+            s_type: vk::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
             p_next: null(),
             flags: Default::default(),
             message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
@@ -162,10 +198,30 @@ impl Base {
             p_user_data: null_mut(),
             _marker: Default::default(),
         };
+
+        let vulkan_create_info = vk::InstanceCreateInfo {
+            s_type: vk::StructureType::INSTANCE_CREATE_INFO,
+            p_next: &debug_message_info as *const vk::DebugUtilsMessengerCreateInfoEXT as *const c_void,
+            flags: Default::default(),
+            p_application_info: &application_info as *const vk::ApplicationInfo,
+            enabled_layer_count: config.validation_layers.len() as u32,
+            pp_enabled_layer_names: validation_layers.as_ptr(),
+            enabled_extension_count: vulkan_extensions.len() as u32,
+            pp_enabled_extension_names: vulkan_extensions.as_ptr(),
+            _marker: Default::default(),
+        };
+        let vulkan_instance = unsafe {
+            fatal_unwrap_e!(
+                ash_instance.create_instance(&vulkan_create_info, None),
+                "Failed to create instance! {}"
+            )
+        };
+
+        let utils_instance = ext::debug_utils::Instance::new(&ash_instance, &vulkan_instance);
         let debug_messenger = unsafe {
-            fatal_unwrap!(
+            fatal_unwrap_e!(
                 utils_instance.create_debug_utils_messenger(&debug_message_info, None),
-                "Failed to create debug utils messenger"
+                "Failed to create debug utils messenger {}"
             )
         };
 
