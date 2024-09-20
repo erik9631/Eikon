@@ -1,4 +1,6 @@
 use crate::backend::vulkan::base::Base;
+use crate::backend::vulkan::queue::indices::{COMPUTE, GRAPHICS, PRESENT, TRANSFER};
+use crate::backend::vulkan::queue::{QueueFamily, QueueHandles, QueueSelections};
 use crate::backend::vulkan::utils::{to_c_str_array, COMPUTE_OP, GRAPHICS_OP, PRESENT_OP, TRANSFER_OP};
 use crate::{fatal_assert, fatal_unwrap, fatal_unwrap_e};
 use ash::vk::{wl_surface, PhysicalDevice, PhysicalDeviceFeatures, SurfaceCapabilitiesKHR};
@@ -14,7 +16,7 @@ use winit::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 pub fn default_device_mapper(
     properties: &vk::PhysicalDeviceProperties,
-    device_features: &vk::PhysicalDeviceFeatures,
+    device_features: &PhysicalDeviceFeatures,
 ) -> Option<PhysicalDeviceFeatures> {
     if properties.device_type != vk::PhysicalDeviceType::DISCRETE_GPU {
         return None;
@@ -30,16 +32,16 @@ pub fn default_queue_mapper(queue_operations: &[u32], queue_family: &[u32]) -> Q
     for (operation, family) in zipped {
         match *operation {
             GRAPHICS_OP => {
-                queue_selections[QueueSelections::GRAPHICS] = Some(QueueFamily::single(*family));
+                queue_selections.families[GRAPHICS] = Some(QueueFamily::single(*family));
             }
             COMPUTE_OP => {
-                queue_selections[QueueSelections::COMPUTE] = Some(QueueFamily::single(*family));
+                queue_selections.families[COMPUTE] = Some(QueueFamily::single(*family));
             }
             TRANSFER_OP => {
-                queue_selections[QueueSelections::TRANSFER] = Some(QueueFamily::single(*family));
+                queue_selections.families[TRANSFER] = Some(QueueFamily::single(*family));
             }
             PRESENT_OP => {
-                queue_selections[QueueSelections::PRESENT] = Some(QueueFamily::single(*family));
+                queue_selections.families[PRESENT] = Some(QueueFamily::single(*family));
             }
             _ => (),
         }
@@ -52,48 +54,15 @@ struct SurfaceProperties {
     pub formats: Vec<vk::SurfaceFormatKHR>,
     pub present_modes: Vec<vk::PresentModeKHR>,
 }
-#[derive(Clone)]
-struct QueueFamily {
-    pub index: u32,
-    pub count: u32,
-    pub priorities: Vec<f32>,
-}
 
-impl QueueFamily {
-    pub fn new(index: u32, count: u32, priorities: Vec<f32>) -> Self {
-        Self { index, count, priorities }
-    }
-    pub fn single(index: u32) -> Self {
-        Self::new(index, 1, vec![1.0])
-    }
-}
-
-struct QueueSelections {
-    pub families: Vec<Option<QueueFamily>>,
-}
-
-impl QueueSelections {
-    const GRAPHICS: usize = 0;
-    const COMPUTE: usize = 1;
-    const TRANSFER: usize = 2;
-    const PRESENT: usize = 3;
-
-    pub fn new() -> Self {
-        let mut selections = Self {
-            families: Vec::with_capacity(4),
-        };
-        selections.families.fill(None);
-        selections
-    }
-}
-struct PhysicalDeviceInfo {
+pub struct PhysicalDeviceInfo {
     device: PhysicalDevice,
     features: PhysicalDeviceFeatures,
     surface_properties: SurfaceProperties,
 }
 
-struct ContextConfigurator {
-    device_mapper: fn(&vk::PhysicalDeviceProperties, &vk::PhysicalDeviceFeatures) -> Option<PhysicalDeviceFeatures>,
+pub struct ContextConfigurator {
+    device_mapper: fn(&vk::PhysicalDeviceProperties, &PhysicalDeviceFeatures) -> Option<PhysicalDeviceFeatures>,
     queue_mapper: fn(&[u32], &[u32]) -> QueueSelections,
     device_extensions: Vec<CString>,
     raw_window_handle: RawWindowHandle,
@@ -103,7 +72,7 @@ struct ContextConfigurator {
 impl ContextConfigurator {
     pub fn new(raw_window_handle: RawWindowHandle, raw_display_handle: RawDisplayHandle, device_extensions: &[&str]) -> Self {
         Self {
-            device_extensions: to_c_str_array(device_extensions),
+            device_extensions: to_c_str_array(device_extensions.iter()),
             device_mapper: default_device_mapper,
             queue_mapper: default_queue_mapper,
             raw_window_handle,
@@ -310,7 +279,7 @@ impl ContextConfigurator {
         devices
     }
 
-    pub fn obtain_queues(
+    pub fn obtain_queue_families(
         &self,
         base: &Base,
         surface_instance: &khr::surface::Instance,
@@ -356,7 +325,7 @@ impl ContextConfigurator {
         queue_selections: &QueueSelections,
         physical_device_info: &PhysicalDeviceInfo,
     ) -> ash::Device {
-        let mut queues = Vec::with_capacity(queue_selections.family_count() as usize);
+        let mut queues = Vec::with_capacity(queue_selections.families.len());
         for queue_family in queue_selections.families.iter() {
             if let Some(queue_family) = queue_family {
                 queues.push(vk::DeviceQueueCreateInfo {
@@ -382,7 +351,7 @@ impl ContextConfigurator {
             pp_enabled_layer_names: null(),
             enabled_extension_count: device_extension_list.len() as u32,
             pp_enabled_extension_names: device_extension_list.as_ptr(),
-            p_enabled_features: physical_device_info.features.as_ptr(),
+            p_enabled_features: &physical_device_info.features as *const PhysicalDeviceFeatures,
             _marker: Default::default(),
         };
 
@@ -395,16 +364,28 @@ impl ContextConfigurator {
     }
 }
 
+pub fn obtain_queues(logical_device: &ash::Device, queue_selections: &QueueSelections) -> QueueHandles {
+    let mut queues = QueueHandles::new();
+    for (idx, queue_family) in queue_selections.families.iter().enumerate() {
+        if let Some(queue_family) = queue_family {
+            let mut queue_vec = Vec::with_capacity(queue_family.count as usize);
+            for i in 0..queue_family.count {
+                let handle = unsafe { logical_device.get_device_queue(queue_family.index, i) };
+                queue_vec.push(handle);
+            }
+            queues.queues[idx] = Some(queue_vec);
+        }
+    }
+    queues
+}
+
 struct Context {
     base: Base,
     surface_instance: khr::surface::Instance,
     surface: vk::SurfaceKHR,
     physical_devices: Vec<PhysicalDeviceInfo>,
     logical_device: ash::Device,
-    transfer_queue: vk::Queue,
-    graphics_queue: vk::Queue,
-    present_queue: vk::Queue,
-    compute_queue: vk::Queue,
+    queue_handles: QueueHandles,
 }
 
 impl Context {
@@ -412,18 +393,16 @@ impl Context {
         let (surface, surface_instance) = configurator.create_surface(&base);
         // TODO fQueues are not needed. Once logical device is created, the queues should be also created internally
         let physical_devices = configurator.obtain_physical_devices(&base, &surface_instance, &surface);
-        let queue_selections = configurator.obtain_queues(&base, &surface_instance, &physical_devices[0].device, &surface);
+        let queue_selections = configurator.obtain_queue_families(&base, &surface_instance, &physical_devices[0].device, &surface);
         let logical_device = configurator.select_logical_device(&base, &queue_selections, &physical_devices[0]);
+        let queue_handles = obtain_queues(&logical_device, &queue_selections);
         Self {
             base,
             surface_instance,
             surface,
             logical_device,
             physical_devices,
-            transfer_queue: Default::default(),
-            graphics_queue: Default::default(),
-            present_queue: Default::default(),
-            compute_queue: Default::default(),
+            queue_handles,
         }
     }
 }

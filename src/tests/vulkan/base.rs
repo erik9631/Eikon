@@ -84,17 +84,12 @@ struct TestLogger {
 }
 
 impl log::Log for TestLogger {
-    fn enabled(
-        &self,
-        metadata: &Metadata,
-    ) -> bool {
+    fn enabled(&self, metadata: &Metadata) -> bool {
         true
     }
 
-    fn log(
-        &self,
-        record: &Record,
-    ) {
+    fn log(&self, record: &Record) {
+        println!("{:?}", record);
         self.was_called.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -116,7 +111,8 @@ fn vulkan_init_validation_test() {
     log::set_max_level(LevelFilter::Trace);
 
     let base_cfg = BaseConfigBuilder::new()
-        .use_default_khr_validation()
+        .use_khronos_validation()
+        .use_core_vulkan_extensions()
         .build("Test", "Test", "1.3.0", "1.0.0", "1.0.0");
     Base::new(base_cfg).expect("Failed to create base");
     assert!(test_logger.was_called.load(std::sync::atomic::Ordering::Relaxed));

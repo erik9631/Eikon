@@ -12,7 +12,6 @@ use log::{error, info, trace, warn};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::ptr::{null, null_mut};
-use winit::raw_window_handle::RawWindowHandle;
 
 pub unsafe extern "system" fn debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -40,7 +39,7 @@ pub unsafe extern "system" fn debug_callback(
     vk::FALSE
 }
 
-pub fn default_vulkan_extensions() -> Vec<*const c_char> {
+pub fn core_vulkan_extensions() -> Vec<*const c_char> {
     vec![
         khr::surface::NAME.as_ptr(),
         platform_surface_extension!(),
@@ -60,21 +59,19 @@ impl<'a> BaseConfigBuilder<'a> {
             vulkan_extensions: None,
         }
     }
-    pub fn validation_layers(
-        mut self,
-        layers: &'a [&'a str],
-    ) -> Self {
+    pub fn validation_layers(mut self, layers: &'a [&'a str]) -> Self {
         self.validation_layers = Some(layers);
         self
     }
-    pub fn use_default_khr_validation(mut self) -> Self {
+    pub fn use_khronos_validation(mut self) -> Self {
         self.validation_layers = Some(&["VK_LAYER_KHRONOS_validation"]);
         self
     }
-    pub fn vulkan_extensions(
-        mut self,
-        extensions: &'a [&'a str],
-    ) -> Self {
+
+    pub fn use_core_vulkan_extensions(mut self) -> Self {
+        self
+    }
+    pub fn vulkan_extensions(mut self, extensions: &'a [&'a str]) -> Self {
         self.vulkan_extensions = Some(extensions);
         self
     }
@@ -98,6 +95,9 @@ impl<'a> BaseConfigBuilder<'a> {
             application_version: to_version(application_version),
             engine_version: to_version(engine_version),
             vulkan_api_version: to_version(vulkan_api_version),
+
+            // If None then the default is set at initialization. Reason is efficiency.
+            // Default is initialized as static CStr. The internal type is CString. We save copy of the default.
             vulkan_extensions: match self.vulkan_extensions {
                 Some(extensions) => Some(to_c_str_array(extensions.iter())),
                 None => None,
@@ -121,10 +121,7 @@ impl BaseConfig {
     /// # Returns
     /// - `Ok(())` if all layers are found
     /// - `Err(layer_name)` if a layer is not found
-    pub fn validate_layer_availability(
-        &self,
-        ash_entry: &Entry,
-    ) -> Result<(), Error> {
+    pub fn validate_layer_availability(&self, ash_entry: &Entry) -> Result<(), Error> {
         let validation_properties = unsafe {
             fatal_unwrap_e!(
                 ash_entry.enumerate_instance_layer_properties(),
@@ -179,7 +176,7 @@ impl Base {
         let validation_layers: Vec<*const c_char> = config.validation_layers.iter().map(|layer| layer.as_ptr()).collect();
         let vulkan_extensions: Vec<*const c_char> = match config.vulkan_extensions.as_ref() {
             Some(extensions) => extensions.iter().map(|layer| layer.as_ptr()).collect(),
-            None => default_vulkan_extensions(),
+            None => core_vulkan_extensions(),
         };
 
         let debug_message_info = vk::DebugUtilsMessengerCreateInfoEXT {
