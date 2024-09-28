@@ -1,22 +1,32 @@
-use crate::utils::{
+pub mod backend;
+pub mod utils;
+
+pub mod log;
+pub mod tests;
+
+use crate::backend::vulkan::context::{obtain_queues, ContextConfigurator};
+use crate::log::Logger;
+use ash::vk::{CommandBuffer, PhysicalDevice, SurfaceFormatKHR};
+use ash::{khr, vk};
+use eikon::utils::{
     create_command_buffers, create_command_pool, create_framebuffer, create_image_views, create_logical_device, create_messenger_info,
     create_pipeline, create_surface, create_swap_chain, create_sync_objects, create_validation_layers_requirements, create_vulcan_instance,
     get_queue_families, get_surface_properties, pick_physical_device, PipelineInfo, QueueFamilyIndices,
 };
-use ash::vk::{CommandBuffer, PhysicalDevice, SurfaceFormatKHR};
-use ash::{khr, vk};
+use ::log::LevelFilter::Trace;
 use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
 use std::ptr::{null, null_mut};
 use std::str::from_utf8_unchecked;
+use tests::vulkan::test_utils::{create_test_base, TestApp};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event::WindowEvent::CloseRequested;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::platform::windows::EventLoopBuilderExtWindows;
+use winit::raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::window::{Window, WindowId};
 
-mod utils;
 pub struct Vulkan {
     ash_entry: ash::Entry,
     vk_instance: ash::Instance,
@@ -375,6 +385,28 @@ impl ApplicationHandler<()> for App {
     }
 }
 fn main() {
-    let mut app = App::new();
+    Logger::init(Trace);
+    let testfn = |window: &Window| -> ContextConfigurator {
+        let base = create_test_base();
+        let context_config = ContextConfigurator::new(
+            window.raw_window_handle().expect("Failed to get raw window handle"),
+            window.raw_display_handle().expect("Failed to get raw display handle"),
+            &["VK_KHR_swapchain"],
+        );
+        let (surface, surface_instance) = context_config.create_surface(&base);
+        let physical_devices = context_config.obtain_physical_devices(&base, &surface_instance, &surface);
+        assert!(physical_devices.len() > 0);
+        let queue_selections = context_config.obtain_queue_families(&base, &surface_instance, &physical_devices[0].device, &surface);
+        assert!(queue_selections.families.len() > 0);
+        let logical_device = context_config.select_logical_device(&base, &queue_selections, &physical_devices[0]);
+        let queue_handles = obtain_queues(&logical_device, &queue_selections);
+        assert!(queue_handles.queues.len() > 0);
+        unsafe { surface_instance.destroy_surface(surface, None) };
+        context_config
+    };
+    let mut app = TestApp::new(testfn);
     app.run();
+
+    // let mut app = App::new();
+    // app.run();
 }

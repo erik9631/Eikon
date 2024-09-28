@@ -160,6 +160,7 @@ impl BaseConfig {
     }
 }
 
+// TODO Should work similarly to surface instance. It should be a light wrapper around the vulkan instance.
 pub struct Base {
     pub ash_instance: Entry,
     pub vulkan_instance: Instance,

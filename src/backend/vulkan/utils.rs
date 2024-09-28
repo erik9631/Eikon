@@ -50,13 +50,3 @@ pub fn to_version(version: &str) -> u32 {
     let patch = version.next().unwrap().parse::<u32>().unwrap();
     vk::make_api_version(0, major, minor, patch)
 }
-
-pub const GRAPHICS_OP: u32 = 0b1;
-pub const COMPUTE_OP: u32 = 0b10;
-pub const TRANSFER_OP: u32 = 0b100;
-pub const SPARSE_BINDING_OP: u32 = 0b1000;
-pub const PROTECTED_OP: u32 = 0b00010000;
-pub const VIDEO_DECODE_OP: u32 = 0b00100000;
-pub const VIDEO_ENCODE_OP: u32 = 0b01000000;
-pub const OPTICAL_FLOW_OP: u32 = 0b10000000;
-pub const PRESENT_OP: u32 = 0x8000_0000;

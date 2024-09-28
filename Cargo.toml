@@ -11,13 +11,17 @@ build = "build.rs"
 
 [dependencies]
 log = "0.4.22"
-eta-algorithms = "1.6.0"
+eta-algorithms = "1.6.2"
 nalgebra = "0.33.0"
 ash = "0.38.0"
 winit = "0.30.5"
 
 [profile.release]
 debug = true
+
+[lib]
+name = "eikon"
+path = "src/lib.rs"
 
 [[bin]]
 build = "build.rs"
