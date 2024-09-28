@@ -25,7 +25,6 @@ pub fn default_device_mapper(
     Some(PhysicalDeviceFeatures::default())
 }
 
-/// OPTIMIZE No need for operations array. We can use bitflags as a hash. No need to do conversions then.
 pub fn default_queue_mapper(queue_operations: &[u8], queue_family_indices: &[u32], family_count: u32) -> QueueSelections {
     let (operations, family_index) = extract_unique_pairs(queue_operations, queue_family_indices);
     let mut queue_selections = QueueSelections::new(family_count);
